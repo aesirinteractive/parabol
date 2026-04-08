@@ -77,7 +77,8 @@ Return JSON: { "groups": [{ "title": "...", "reflectionIds": ["id1", "id2"] }] }
             content: prompt
           }
         ],
-        response_format: {type: 'json_object'}
+        response_format: {type: 'json_object'},
+        max_tokens: 4096
       })
 
       const rawContent = response.choices[0]?.message?.content
