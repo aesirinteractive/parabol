@@ -1483,6 +1483,11 @@ type Mutation {
   autogroup(meetingId: ID!): AutogroupPayload!
 
   """
+  Ungroups all reflections in a retrospective meeting, giving each its own group
+  """
+  ungroupAllReflections(meetingId: ID!): UngroupAllReflectionsPayload!
+
+  """
   Regenerates AI-suggested reflection groups for a retrospective meeting
   """
   regenerateGroups(meetingId: ID!): RegenerateGroupsPayload!

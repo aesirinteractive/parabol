@@ -2,9 +2,11 @@ import {SubscriptionChannel} from '../../../../client/types/constEnums'
 import getKysely from '../../../postgres/getKysely'
 import {analytics} from '../../../utils/analytics/analytics'
 import {getUserId} from '../../../utils/authorization'
+import OpenAIServerManager from '../../../utils/OpenAIServerManager'
 import publish from '../../../utils/publish'
 import standardError from '../../../utils/standardError'
 import type {GQLContext} from '../../graphql'
+import canAccessAI from '../../mutations/helpers/canAccessAI'
 import addReflectionToGroup from '../../mutations/helpers/updateReflectionLocation/addReflectionToGroup'
 import type {MutationResolvers} from '../resolverTypes'
 
@@ -35,11 +37,10 @@ const autogroup: MutationResolvers['autogroup'] = async (
     })
   }
 
-  const {autogroupReflectionGroups, teamId} = meeting
-  if (!autogroupReflectionGroups) {
-    return standardError(new Error('No autogroup reflection groups found'), {
-      userId: viewerId
-    })
+  const {teamId} = meeting
+  const team = await dataLoader.get('teams').loadNonNull(teamId)
+  if (!(await canAccessAI(team, dataLoader))) {
+    return standardError(new Error('AI access is not available'), {userId: viewerId})
   }
 
   const resetReflectionGroups = reflectionGroups.map((group) => {
@@ -53,9 +54,25 @@ const autogroup: MutationResolvers['autogroup'] = async (
     }
   })
 
+  const manager = new OpenAIServerManager()
+  const promptIds = [...new Set(reflections.map((r) => r.promptId))]
+  const prompts = await Promise.all(
+    promptIds.map((id) => dataLoader.get('reflectPrompts').loadNonNull(id))
+  )
+  const promptMap = new Map(prompts.map((p) => [p.id, p.question]))
+  const input = reflections.map((r) => ({
+    id: r.id,
+    text: r.plaintextContent,
+    prompt: promptMap.get(r.promptId) ?? ''
+  }))
+  const aiResult = await manager.groupReflectionsStructured(input)
+  if (!aiResult) {
+    return standardError(new Error('AI grouping failed'), {userId: viewerId})
+  }
+
   await Promise.all([
-    ...autogroupReflectionGroups.flatMap((group) => {
-      const {groupTitle, reflectionIds} = group
+    ...aiResult.groups.flatMap((group) => {
+      const {title: groupTitle, reflectionIds} = group
       const reflectionsInGroup = reflections.filter(({id}) => reflectionIds.includes(id))
       const firstReflectionInGroup = reflectionsInGroup[0]
       if (!firstReflectionInGroup) {

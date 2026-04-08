@@ -4,13 +4,11 @@ import groupReflections from '../../../../client/utils/smartGroup/groupReflectio
 import type GenericMeetingStage from '../../../database/types/GenericMeetingStage'
 import getKysely from '../../../postgres/getKysely'
 import type {AnyMeeting, RetrospectiveMeeting} from '../../../postgres/types/Meeting'
-import {Logger} from '../../../utils/Logger'
 import type {DataLoaderWorker} from '../../graphql'
 import addAIGeneratedContentToThreads from './addAIGeneratedContentToThreads'
 import addDiscussionTopics from './addDiscussionTopics'
 import addRecallBot from './addRecallBot'
 import generateDiscussionPrompt from './generateDiscussionPrompt'
-import generateGroups from './generateGroups'
 import {publishToEmbedder} from './publishToEmbedder'
 import removeEmptyReflections from './removeEmptyReflections'
 
@@ -56,7 +54,6 @@ const handleCompletedRetrospectiveStage = async (
       )
 
       data.reflectionGroups = sortedReflectionGroups
-      generateGroups(reflections, meeting.teamId).catch(Logger.log)
     } else if (stage.phaseType === GROUP) {
       const {facilitatorUserId, phases, teamId} = meeting
       unlockAllStagesForPhase(phases, 'discuss', true)

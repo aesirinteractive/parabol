@@ -1,10 +1,10 @@
 import graphql from 'babel-plugin-relay/macro'
 import {commitMutation} from 'react-relay'
-import type {AutogroupMutation as TAutogroupMutation} from '../__generated__/AutogroupMutation.graphql'
+import type {UngroupAllReflectionsMutation as TUngroupAllReflectionsMutation} from '../__generated__/UngroupAllReflectionsMutation.graphql'
 import type {StandardMutation} from '../types/relayMutations'
 
 graphql`
-  fragment AutogroupMutation_meeting on AutogroupSuccess {
+  fragment UngroupAllReflectionsMutation_meeting on UngroupAllReflectionsSuccess {
     meeting {
       id
       ... on RetrospectiveMeeting {
@@ -26,24 +26,24 @@ graphql`
 `
 
 const mutation = graphql`
-  mutation AutogroupMutation($meetingId: ID!) {
-    autogroup(meetingId: $meetingId) {
+  mutation UngroupAllReflectionsMutation($meetingId: ID!) {
+    ungroupAllReflections(meetingId: $meetingId) {
       ... on ErrorPayload {
         error {
           message
         }
       }
-      ...AutogroupMutation_meeting @relay(mask: false)
+      ...UngroupAllReflectionsMutation_meeting @relay(mask: false)
     }
   }
 `
 
-const AutogroupMutation: StandardMutation<TAutogroupMutation> = (
+const UngroupAllReflectionsMutation: StandardMutation<TUngroupAllReflectionsMutation> = (
   atmosphere,
   variables,
   {onError, onCompleted}
 ) => {
-  return commitMutation<TAutogroupMutation>(atmosphere, {
+  return commitMutation<TUngroupAllReflectionsMutation>(atmosphere, {
     mutation,
     variables,
     onCompleted,
@@ -51,4 +51,4 @@ const AutogroupMutation: StandardMutation<TAutogroupMutation> = (
   })
 }
 
-export default AutogroupMutation
+export default UngroupAllReflectionsMutation

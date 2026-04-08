@@ -41,6 +41,9 @@ const subscription = graphql`
       UngroupReflectionSuccess {
         ...UngroupReflectionMutation_meeting @relay(mask: false)
       }
+      UngroupAllReflectionsSuccess {
+        ...UngroupAllReflectionsMutation_meeting @relay(mask: false)
+      }
       GenerateGroupsSuccess {
         ...GenerateGroupsFrag_meeting @relay(mask: false)
       }

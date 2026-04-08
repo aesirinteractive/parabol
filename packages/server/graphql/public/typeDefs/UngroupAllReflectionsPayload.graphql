@@ -1,0 +1,4 @@
+"""
+Return value for ungroupAllReflections, which could be an error
+"""
+union UngroupAllReflectionsPayload = ErrorPayload | UngroupAllReflectionsSuccess
