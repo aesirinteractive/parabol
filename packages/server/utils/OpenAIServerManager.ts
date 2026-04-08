@@ -26,12 +26,18 @@ class OpenAIServerManager {
   openAIApi
   defaultModel: string
   groupingBatchSize: number
+  maxTokens: number
+  temperature: number
+  topP: number
   constructor() {
     const apiKey = process.env.AI_GENERATION_API_KEY || process.env.OPEN_AI_API_KEY
     if (!apiKey) {
       this.openAIApi = null
       this.defaultModel = ''
       this.groupingBatchSize = 50
+      this.maxTokens = 4096
+      this.temperature = 0.3
+      this.topP = 1
       return
     }
     const baseURL = process.env.AI_GENERATION_BASE_URL || undefined
@@ -42,6 +48,9 @@ class OpenAIServerManager {
     })
     this.defaultModel = process.env.AI_GENERATION_DEFAULT_MODEL || 'gpt-4o'
     this.groupingBatchSize = parseInt(process.env.AI_GROUPING_BATCH_SIZE || '50', 10)
+    this.maxTokens = parseInt(process.env.AI_GENERATION_MAX_TOKENS || '4096', 10)
+    this.temperature = parseFloat(process.env.AI_GENERATION_TEMPERATURE || '0.3')
+    this.topP = parseFloat(process.env.AI_GENERATION_TOP_P || '1')
   }
 
   private parseLLMJson<T>(rawContent: string, label: string): T | null {
@@ -68,7 +77,9 @@ class OpenAIServerManager {
       model: this.defaultModel,
       messages: [{role: 'user', content: prompt}],
       response_format: {type: 'json_object'},
-      max_tokens: 4096
+      max_tokens: this.maxTokens,
+      temperature: this.temperature,
+      top_p: this.topP
     })
 
     const finishReason = response.choices[0]?.finish_reason
@@ -85,39 +96,56 @@ class OpenAIServerManager {
     return rawContent
   }
 
-  private validateGroupResult(
+  private repairGroupResult(
     parsed: GroupReflectionsResult,
     inputIds: Set<string>,
     label: string
-  ): boolean {
+  ): GroupReflectionsResult | null {
     if (!parsed.groups || !Array.isArray(parsed.groups)) {
       Logger.warn(`${label}: Response missing valid groups array, got keys: ${Object.keys(parsed).join(', ')}`)
-      return false
+      return null
     }
-    const outputIds = new Set<string>()
+
+    const seenIds = new Set<string>()
+    const repairedGroups: GroupReflectionsResult['groups'] = []
+
     for (const group of parsed.groups) {
       if (!group.title || !Array.isArray(group.reflectionIds)) {
-        Logger.warn(`${label}: Group missing title or reflectionIds: ${JSON.stringify(group).slice(0, 200)}`)
-        return false
+        Logger.warn(`${label}: Skipping group with missing title or reflectionIds: ${JSON.stringify(group).slice(0, 200)}`)
+        continue
       }
-      for (const id of group.reflectionIds) {
+      const uniqueIds = group.reflectionIds.filter((id) => {
         if (!inputIds.has(id)) {
-          Logger.warn(`${label}: Unknown reflection ID in response: ${id}`)
+          Logger.warn(`${label}: Removing unknown reflection ID: ${id}`)
           return false
         }
-        if (outputIds.has(id)) {
-          Logger.warn(`${label}: Duplicate reflection ID in response: ${id}`)
+        if (seenIds.has(id)) {
+          Logger.warn(`${label}: Removing duplicate reflection ID: ${id}`)
           return false
         }
-        outputIds.add(id)
+        seenIds.add(id)
+        return true
+      })
+      if (uniqueIds.length > 0) {
+        repairedGroups.push({title: group.title, reflectionIds: uniqueIds})
       }
     }
-    if (outputIds.size !== inputIds.size) {
-      const missingIds = [...inputIds].filter((id) => !outputIds.has(id))
-      Logger.warn(`${label}: Not all reflections assigned. Missing: ${missingIds.join(', ')}`)
-      return false
+
+    // Add missing reflections as individual groups
+    const missingIds = [...inputIds].filter((id) => !seenIds.has(id))
+    if (missingIds.length > 0) {
+      Logger.warn(`${label}: ${missingIds.length} reflections were unassigned, adding as individual groups`)
+      for (const id of missingIds) {
+        repairedGroups.push({title: 'Ungrouped', reflectionIds: [id]})
+      }
     }
-    return true
+
+    if (repairedGroups.length === 0) {
+      Logger.warn(`${label}: No valid groups after repair`)
+      return null
+    }
+
+    return {groups: repairedGroups}
   }
 
   private buildGroupingPrompt(reflections: GroupReflectionsInput[]): string {
@@ -160,10 +188,11 @@ Return JSON: { "groups": [{ "title": "...", "reflectionIds": ["id1", "id2"] }] }
       if (!parsed) return null
 
       const inputIds = new Set(batch.map((r) => r.id))
-      if (!this.validateGroupResult(parsed, inputIds, label)) return null
+      const repaired = this.repairGroupResult(parsed, inputIds, label)
+      if (!repaired) return null
 
-      Logger.info(`${label}: Success — ${parsed.groups.length} groups created`)
-      return parsed
+      Logger.info(`${label}: Success — ${repaired.groups.length} groups created`)
+      return repaired
     } catch (e) {
       const error = e instanceof Error ? e : new Error(`LLM failed for ${label}`)
       logError(error)
@@ -256,9 +285,7 @@ Every group index (0 to ${allGroups.length - 1}) must appear in exactly one merg
         if (!parsed) return null
 
         const inputIds = new Set(reflections.map((r) => r.id))
-        if (!this.validateGroupResult(parsed, inputIds, label)) return null
-
-        return parsed
+        return this.repairGroupResult(parsed, inputIds, label)
       } catch (e) {
         const error =
           e instanceof Error ? e : new Error('OpenAI failed to groupReflectionsStructured')
@@ -291,18 +318,15 @@ Every group index (0 to ${allGroups.length - 1}) must appear in exactly one merg
     // Step 2: Merge similar groups across batches
     const merged = await this.mergeGroupTitles(batchResults)
 
-    // Step 3: Final validation
+    // Step 3: Final repair
     const inputIds = new Set(reflections.map((r) => r.id))
-    if (!this.validateGroupResult(merged, inputIds, 'groupReflectionsStructured:final')) {
-      Logger.warn('groupReflectionsStructured: Final merged result failed validation, returning unvalidated')
-      // Still return the merged result — it may have minor issues but is better than nothing
-      return merged
-    }
+    const finalResult = this.repairGroupResult(merged, inputIds, 'groupReflectionsStructured:final')
+    if (!finalResult) return null
 
     Logger.info(
-      `groupReflectionsStructured: Batched grouping complete — ${merged.groups.length} final groups from ${reflections.length} reflections`
+      `groupReflectionsStructured: Batched grouping complete — ${finalResult.groups.length} final groups from ${reflections.length} reflections`
     )
-    return merged
+    return finalResult
   }
 
   async getStandupSummary(
