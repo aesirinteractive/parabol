@@ -12,8 +12,6 @@ import {
 import type {ISO6391} from '../iso6393To1'
 import {URLRegex} from '../regex'
 import {AbstractModel} from './AbstractModel'
-import type {ModelId} from './modelIdDefinitions'
-
 export interface EmbeddingModelParams {
   embeddingDimensions: number
   precision: 32 | 16
@@ -28,9 +26,9 @@ export abstract class AbstractEmbeddingsModel extends AbstractModel {
   readonly tableName: EmbeddingsTable
   readonly pagesTableName: EmbeddingsPagesTable
   readonly languages: readonly ISO6391[]
-  readonly modelId: ModelId
+  readonly modelId: string
   protected isReady = false
-  constructor(modelId: ModelId, url: string, maxTokens: number) {
+  constructor(modelId: string, url: string, maxTokens: number) {
     super(url)
     this.modelId = modelId
     const modelParams = this.constructModelParams(modelId)
@@ -41,7 +39,7 @@ export abstract class AbstractEmbeddingsModel extends AbstractModel {
     this.tableName = getEmbeddingsTableName(modelId)
     this.pagesTableName = getEmbeddingsPagesTableName(modelId)!
   }
-  protected abstract constructModelParams(modelId: ModelId): EmbeddingModelParams
+  protected abstract constructModelParams(modelId: string): EmbeddingModelParams
   abstract getEmbedding(content: string, retries?: number): Promise<number[] | Error>
   abstract ready(): Promise<boolean>
 

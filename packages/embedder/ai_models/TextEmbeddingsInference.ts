@@ -3,7 +3,7 @@ import sleep from 'parabol-client/utils/sleep'
 import {Logger} from '../../server/utils/Logger'
 import type {paths} from '../textEmbeddingsnterface'
 import {AbstractEmbeddingsModel, type EmbeddingModelParams} from './AbstractEmbeddingsModel'
-import {type ModelId, modelIdDefinitions} from './modelIdDefinitions'
+import {type ModelId, getEmbeddingModelParams} from './modelIdDefinitions'
 
 const openAPIWithTimeout =
   (client: ClientMethod<any, any, any>, toError: (error: unknown) => any, timeout: number) =>
@@ -97,9 +97,9 @@ export class TextEmbeddingsInference extends AbstractEmbeddingsModel {
     return data[0]!
   }
 
-  protected constructModelParams(modelId: ModelId): EmbeddingModelParams {
-    const modelParams = modelIdDefinitions[modelId]
-    if (!modelParams) throw new Error(`Unknown modelId ${modelId} for TextEmbeddingsInference`)
+  protected constructModelParams(modelId: string): EmbeddingModelParams {
+    const modelParams = getEmbeddingModelParams(modelId)
+    if (!modelParams) throw new Error(`Unknown embedding model "${modelId}". Add it to modelIdDefinitions.ts with embeddingDimensions, precision, tableSuffix, and languages.`)
     return modelParams
   }
 }

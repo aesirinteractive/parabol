@@ -6,25 +6,24 @@ import {
   type GenerationOptions
 } from './AbstractGenerationModel'
 
-export type ModelId = 'gpt-3.5-turbo-0125' | 'gpt-4-turbo-preview' | 'Qwen3-30B-Instruct'
-
 type OpenAIGenerationOptions = Omit<GenerationOptions, 'topK'>
 
-const modelIdDefinitions: Record<ModelId, GenerationModelParams> = {
+const knownModels: Record<string, GenerationModelParams> = {
   'gpt-3.5-turbo-0125': {
     maxInputTokens: 4096
   },
   'gpt-4-turbo-preview': {
     maxInputTokens: 128000
-  },
-  'Qwen3-30B-Instruct': {
-    maxInputTokens: 32768
   }
+}
+
+const DEFAULT_GENERATION_PARAMS: GenerationModelParams = {
+  maxInputTokens: 32768
 }
 
 export class OpenAIGeneration extends AbstractGenerationModel {
   private openAIApi: OpenAI | null
-  private modelId!: ModelId
+  private modelId!: string
 
   constructor(modelId: string, url: string) {
     super(modelId, url)
@@ -75,8 +74,11 @@ export class OpenAIGeneration extends AbstractGenerationModel {
     }
   }
   protected constructModelParams(modelId: string): GenerationModelParams {
-    const modelParams = modelIdDefinitions[modelId as keyof typeof modelIdDefinitions]
-    if (!modelParams) throw new Error(`Unknown modelId ${modelId} for OpenAIGeneration`)
+    const modelParams = knownModels[modelId]
+    if (!modelParams) {
+      Logger.info(`OpenAIGeneration: Unknown model "${modelId}", using default params (maxInputTokens=${DEFAULT_GENERATION_PARAMS.maxInputTokens})`)
+      return DEFAULT_GENERATION_PARAMS
+    }
     return modelParams
   }
 }

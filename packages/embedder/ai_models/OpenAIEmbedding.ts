@@ -1,15 +1,15 @@
 import OpenAI from 'openai'
 import {AbstractEmbeddingsModel, type EmbeddingModelParams} from './AbstractEmbeddingsModel'
-import {type ModelId, modelIdDefinitions} from './modelIdDefinitions'
+import {getEmbeddingModelParams} from './modelIdDefinitions'
 
 export class OpenAIEmbedding extends AbstractEmbeddingsModel {
   client: OpenAI
   url: string
-  modelId: ModelId
-  constructor(modelId: ModelId, url: string, maxTokens: number) {
+  modelId: string
+  constructor(modelId: string, url: string, maxTokens: number) {
     super(modelId, url, maxTokens)
     this.url = url
-    this.modelId = modelId as ModelId
+    this.modelId = modelId
     this.client = new OpenAI({
       apiKey: process.env.AI_EMBEDDING_API_KEY || 'vllm',
       baseURL: url
@@ -43,9 +43,9 @@ export class OpenAIEmbedding extends AbstractEmbeddingsModel {
     return data[0]?.embedding ?? []
   }
 
-  protected constructModelParams(modelId: ModelId): EmbeddingModelParams {
-    const modelParams = modelIdDefinitions[modelId]
-    if (!modelParams) throw new Error(`Unknown modelId ${modelId} for OpenAIEmbedding`)
+  protected constructModelParams(modelId: string): EmbeddingModelParams {
+    const modelParams = getEmbeddingModelParams(modelId)
+    if (!modelParams) throw new Error(`Unknown embedding model "${modelId}". Add it to modelIdDefinitions.ts with embeddingDimensions, precision, tableSuffix, and languages.`)
     return modelParams
   }
 }

@@ -125,4 +125,9 @@ export const modelIdDefinitions = {
   }
 } satisfies Record<string, EmbeddingModelParams>
 
-export type ModelId = keyof typeof modelIdDefinitions
+export type KnownEmbeddingModelId = keyof typeof modelIdDefinitions
+export type ModelId = string
+
+export function getEmbeddingModelParams(modelId: string): EmbeddingModelParams | null {
+  return modelIdDefinitions[modelId as KnownEmbeddingModelId] ?? null
+}
