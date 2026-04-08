@@ -69,6 +69,11 @@ Group these reflections to maximize the value of team discussion. Rules:
 Return JSON: { "groups": [{ "title": "...", "reflectionIds": ["id1", "id2"] }] }`
 
     try {
+      const baseURL = this.openAIApi?.baseURL
+      Logger.info(
+        `groupReflectionsStructured: Sending request to ${baseURL || 'OpenAI'} with model=${this.defaultModel}, reflections=${reflections.length}, max_tokens=4096, prompt length=${prompt.length} chars`
+      )
+
       const response = await this.openAIApi.chat.completions.create({
         model: this.defaultModel,
         messages: [
@@ -80,6 +85,12 @@ Return JSON: { "groups": [{ "title": "...", "reflectionIds": ["id1", "id2"] }] }
         response_format: {type: 'json_object'},
         max_tokens: 4096
       })
+
+      const finishReason = response.choices[0]?.finish_reason
+      const usage = response.usage
+      Logger.info(
+        `groupReflectionsStructured: Response received. finish_reason=${finishReason}, tokens=${JSON.stringify(usage)}`
+      )
 
       const rawContent = response.choices[0]?.message?.content
       if (!rawContent) {

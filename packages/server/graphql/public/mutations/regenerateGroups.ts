@@ -38,6 +38,9 @@ const regenerateGroups: MutationResolvers['regenerateGroups'] = async (
     .where('id', '=', meetingId)
     .execute()
 
+  // Clear cached meeting so the mutation response returns the fresh null value
+  dataLoader.get('newMeetings').clear(meetingId)
+
   const data = {meetingId}
   publish(SubscriptionChannel.MEETING, meetingId, 'GenerateGroupsSuccess', data, subOptions)
 
