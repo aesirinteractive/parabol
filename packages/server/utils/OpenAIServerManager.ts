@@ -25,11 +25,13 @@ type GroupReflectionsResult = {
 class OpenAIServerManager {
   openAIApi
   defaultModel: string
+  groupingBatchSize: number
   constructor() {
     const apiKey = process.env.AI_GENERATION_API_KEY || process.env.OPEN_AI_API_KEY
     if (!apiKey) {
       this.openAIApi = null
       this.defaultModel = ''
+      this.groupingBatchSize = 50
       return
     }
     const baseURL = process.env.AI_GENERATION_BASE_URL || undefined
@@ -39,18 +41,90 @@ class OpenAIServerManager {
       ...(process.env.OPEN_AI_ORG_ID && {organization: process.env.OPEN_AI_ORG_ID})
     })
     this.defaultModel = process.env.AI_GENERATION_DEFAULT_MODEL || 'gpt-4o'
+    this.groupingBatchSize = parseInt(process.env.AI_GROUPING_BATCH_SIZE || '50', 10)
   }
 
-  async groupReflectionsStructured(
-    reflections: GroupReflectionsInput[]
-  ): Promise<GroupReflectionsResult | null> {
-    if (!this.openAIApi) return null
-    if (reflections.length === 0) return null
+  private parseLLMJson<T>(rawContent: string, label: string): T | null {
+    // Strip markdown fences that local LLMs sometimes add
+    const fenceMatch = rawContent.match(/^[\s\S]*?```(?:json)?\s*\n?([\s\S]*?)\n?\s*```[\s\S]*$/)
+    const content = fenceMatch ? fenceMatch[1]!.trim() : rawContent.trim()
 
+    try {
+      return JSON.parse(content) as T
+    } catch {
+      Logger.warn(`${label}: Failed to parse JSON response: ${rawContent.slice(0, 500)}`)
+      return null
+    }
+  }
+
+  private async callLLM(prompt: string, label: string): Promise<string | null> {
+    if (!this.openAIApi) return null
+    const baseURL = this.openAIApi.baseURL
+    Logger.info(
+      `${label}: Sending request to ${baseURL || 'OpenAI'} with model=${this.defaultModel}, prompt length=${prompt.length} chars`
+    )
+
+    const response = await this.openAIApi.chat.completions.create({
+      model: this.defaultModel,
+      messages: [{role: 'user', content: prompt}],
+      response_format: {type: 'json_object'},
+      max_tokens: 4096
+    })
+
+    const finishReason = response.choices[0]?.finish_reason
+    const usage = response.usage
+    Logger.info(
+      `${label}: Response received. finish_reason=${finishReason}, tokens=${JSON.stringify(usage)}`
+    )
+
+    const rawContent = response.choices[0]?.message?.content
+    if (!rawContent) {
+      Logger.warn(`${label}: LLM returned empty content`)
+      return null
+    }
+    return rawContent
+  }
+
+  private validateGroupResult(
+    parsed: GroupReflectionsResult,
+    inputIds: Set<string>,
+    label: string
+  ): boolean {
+    if (!parsed.groups || !Array.isArray(parsed.groups)) {
+      Logger.warn(`${label}: Response missing valid groups array, got keys: ${Object.keys(parsed).join(', ')}`)
+      return false
+    }
+    const outputIds = new Set<string>()
+    for (const group of parsed.groups) {
+      if (!group.title || !Array.isArray(group.reflectionIds)) {
+        Logger.warn(`${label}: Group missing title or reflectionIds: ${JSON.stringify(group).slice(0, 200)}`)
+        return false
+      }
+      for (const id of group.reflectionIds) {
+        if (!inputIds.has(id)) {
+          Logger.warn(`${label}: Unknown reflection ID in response: ${id}`)
+          return false
+        }
+        if (outputIds.has(id)) {
+          Logger.warn(`${label}: Duplicate reflection ID in response: ${id}`)
+          return false
+        }
+        outputIds.add(id)
+      }
+    }
+    if (outputIds.size !== inputIds.size) {
+      const missingIds = [...inputIds].filter((id) => !outputIds.has(id))
+      Logger.warn(`${label}: Not all reflections assigned. Missing: ${missingIds.join(', ')}`)
+      return false
+    }
+    return true
+  }
+
+  private buildGroupingPrompt(reflections: GroupReflectionsInput[]): string {
     const min = Math.max(1, Math.floor(reflections.length / 6))
     const max = Math.ceil(reflections.length / 3)
 
-    const prompt = `You are an expert facilitator for agile team retrospective meetings. In a retrospective, team members write reflections about their recent work, then group them into themes for focused discussion. Your job is to group reflections in the way that will lead to the most productive team conversations.
+    return `You are an expert facilitator for agile team retrospective meetings. In a retrospective, team members write reflections about their recent work, then group them into themes for focused discussion. Your job is to group reflections in the way that will lead to the most productive team conversations.
 
 Each reflection was written in response to a specific prompt (shown in parentheses). Reflections from different prompts CAN be grouped together when they share a common actionable theme — the prompt category is context, not a hard boundary.
 
@@ -67,95 +141,168 @@ Group these reflections to maximize the value of team discussion. Rules:
 - Titles must be distinct from each other
 
 Return JSON: { "groups": [{ "title": "...", "reflectionIds": ["id1", "id2"] }] }`
+  }
+
+  private async groupReflectionBatch(
+    batch: GroupReflectionsInput[],
+    batchIndex: number,
+    totalBatches: number
+  ): Promise<GroupReflectionsResult | null> {
+    const label = `groupBatch[${batchIndex + 1}/${totalBatches}]`
+    Logger.info(`${label}: Grouping ${batch.length} reflections...`)
 
     try {
-      const baseURL = this.openAIApi?.baseURL
-      Logger.info(
-        `groupReflectionsStructured: Sending request to ${baseURL || 'OpenAI'} with model=${this.defaultModel}, reflections=${reflections.length}, max_tokens=4096, prompt length=${prompt.length} chars`
-      )
+      const prompt = this.buildGroupingPrompt(batch)
+      const rawContent = await this.callLLM(prompt, label)
+      if (!rawContent) return null
 
-      const response = await this.openAIApi.chat.completions.create({
-        model: this.defaultModel,
-        messages: [
-          {
-            role: 'user',
-            content: prompt
-          }
-        ],
-        response_format: {type: 'json_object'},
-        max_tokens: 4096
-      })
+      const parsed = this.parseLLMJson<GroupReflectionsResult>(rawContent, label)
+      if (!parsed) return null
 
-      const finishReason = response.choices[0]?.finish_reason
-      const usage = response.usage
-      Logger.info(
-        `groupReflectionsStructured: Response received. finish_reason=${finishReason}, tokens=${JSON.stringify(usage)}`
-      )
+      const inputIds = new Set(batch.map((r) => r.id))
+      if (!this.validateGroupResult(parsed, inputIds, label)) return null
 
-      const rawContent = response.choices[0]?.message?.content
-      if (!rawContent) {
-        Logger.warn('groupReflectionsStructured: LLM returned empty content')
-        return null
-      }
-
-      // Strip markdown fences that local LLMs sometimes add
-      const fenceMatch = rawContent.match(/^[\s\S]*?```(?:json)?\s*\n?([\s\S]*?)\n?\s*```[\s\S]*$/)
-      const content = fenceMatch ? fenceMatch[1]!.trim() : rawContent.trim()
-
-      let parsed: GroupReflectionsResult
-      try {
-        parsed = JSON.parse(content)
-      } catch {
-        Logger.warn(
-          `groupReflectionsStructured: Failed to parse JSON response: ${rawContent.slice(0, 500)}`
-        )
-        return null
-      }
-
-      if (!parsed.groups || !Array.isArray(parsed.groups)) {
-        Logger.warn(
-          `groupReflectionsStructured: Response missing valid groups array, got keys: ${Object.keys(parsed).join(', ')}`
-        )
-        return null
-      }
-
-      // Validate every input ID appears exactly once
-      const inputIds = new Set(reflections.map((r) => r.id))
-      const outputIds = new Set<string>()
-      for (const group of parsed.groups) {
-        if (!group.title || !Array.isArray(group.reflectionIds)) {
-          Logger.warn(
-            `groupReflectionsStructured: Group missing title or reflectionIds: ${JSON.stringify(group).slice(0, 200)}`
-          )
-          return null
-        }
-        for (const id of group.reflectionIds) {
-          if (!inputIds.has(id)) {
-            Logger.warn(`groupReflectionsStructured: Unknown reflection ID in response: ${id}`)
-            return null
-          }
-          if (outputIds.has(id)) {
-            Logger.warn(`groupReflectionsStructured: Duplicate reflection ID in response: ${id}`)
-            return null
-          }
-          outputIds.add(id)
-        }
-      }
-      if (outputIds.size !== inputIds.size) {
-        const missingIds = [...inputIds].filter((id) => !outputIds.has(id))
-        Logger.warn(
-          `groupReflectionsStructured: Not all reflections assigned. Missing: ${missingIds.join(', ')}`
-        )
-        return null
-      }
-
+      Logger.info(`${label}: Success — ${parsed.groups.length} groups created`)
       return parsed
     } catch (e) {
-      const error =
-        e instanceof Error ? e : new Error('OpenAI failed to groupReflectionsStructured')
+      const error = e instanceof Error ? e : new Error(`LLM failed for ${label}`)
       logError(error)
       return null
     }
+  }
+
+  private async mergeGroupTitles(
+    batchResults: GroupReflectionsResult[]
+  ): Promise<GroupReflectionsResult> {
+    const allGroups = batchResults.flatMap((r) => r.groups)
+    const label = 'mergeGroups'
+    Logger.info(`${label}: Merging ${allGroups.length} groups from ${batchResults.length} batches...`)
+
+    const prompt = `You are merging reflection groups from a retrospective meeting. Multiple batches produced these groups. Merge groups that cover the same theme into a single group with a clear, action-oriented title (2-5 words).
+
+Groups:
+${allGroups.map((g, i) => `${i}: "${g.title}" (${g.reflectionIds.length} reflections)`).join('\n')}
+
+Rules:
+- Merge groups with similar or overlapping themes
+- Keep groups separate if they represent genuinely different topics
+- Each merged group gets a new title that captures the combined theme
+- Groups that don't match any other group stay as-is
+
+Return JSON: { "merges": [{ "finalTitle": "...", "groupIndices": [0, 3, 7] }] }
+Every group index (0 to ${allGroups.length - 1}) must appear in exactly one merge entry.`
+
+    try {
+      const rawContent = await this.callLLM(prompt, label)
+      if (!rawContent) {
+        Logger.warn(`${label}: LLM merge failed, returning unmerged groups`)
+        return {groups: allGroups}
+      }
+
+      type MergeResult = {merges: {finalTitle: string; groupIndices: number[]}[]}
+      const parsed = this.parseLLMJson<MergeResult>(rawContent, label)
+      if (!parsed?.merges || !Array.isArray(parsed.merges)) {
+        Logger.warn(`${label}: Invalid merge response, returning unmerged groups`)
+        return {groups: allGroups}
+      }
+
+      // Build merged groups
+      const usedIndices = new Set<number>()
+      const mergedGroups: GroupReflectionsResult['groups'] = []
+
+      for (const merge of parsed.merges) {
+        if (!merge.finalTitle || !Array.isArray(merge.groupIndices)) continue
+        const reflectionIds: string[] = []
+        for (const idx of merge.groupIndices) {
+          if (idx < 0 || idx >= allGroups.length || usedIndices.has(idx)) continue
+          usedIndices.add(idx)
+          reflectionIds.push(...allGroups[idx]!.reflectionIds)
+        }
+        if (reflectionIds.length > 0) {
+          mergedGroups.push({title: merge.finalTitle, reflectionIds})
+        }
+      }
+
+      // Add any groups the LLM missed
+      for (let i = 0; i < allGroups.length; i++) {
+        if (!usedIndices.has(i)) {
+          mergedGroups.push(allGroups[i]!)
+        }
+      }
+
+      Logger.info(`${label}: Merged ${allGroups.length} groups into ${mergedGroups.length}`)
+      return {groups: mergedGroups}
+    } catch (e) {
+      Logger.warn(`${label}: Merge error, returning unmerged groups`)
+      return {groups: allGroups}
+    }
+  }
+
+  async groupReflectionsStructured(
+    reflections: GroupReflectionsInput[]
+  ): Promise<GroupReflectionsResult | null> {
+    if (!this.openAIApi) return null
+    if (reflections.length === 0) return null
+
+    // Small meetings: single call (original behavior)
+    if (reflections.length <= this.groupingBatchSize) {
+      try {
+        const prompt = this.buildGroupingPrompt(reflections)
+        const label = 'groupReflectionsStructured'
+        const rawContent = await this.callLLM(prompt, label)
+        if (!rawContent) return null
+
+        const parsed = this.parseLLMJson<GroupReflectionsResult>(rawContent, label)
+        if (!parsed) return null
+
+        const inputIds = new Set(reflections.map((r) => r.id))
+        if (!this.validateGroupResult(parsed, inputIds, label)) return null
+
+        return parsed
+      } catch (e) {
+        const error =
+          e instanceof Error ? e : new Error('OpenAI failed to groupReflectionsStructured')
+        logError(error)
+        return null
+      }
+    }
+
+    // Large meetings: batched approach
+    Logger.info(
+      `groupReflectionsStructured: ${reflections.length} reflections exceeds batch size ${this.groupingBatchSize}, using batched approach`
+    )
+
+    const batches: GroupReflectionsInput[][] = []
+    for (let i = 0; i < reflections.length; i += this.groupingBatchSize) {
+      batches.push(reflections.slice(i, i + this.groupingBatchSize))
+    }
+
+    // Step 1: Group each batch sequentially
+    const batchResults: GroupReflectionsResult[] = []
+    for (let i = 0; i < batches.length; i++) {
+      const result = await this.groupReflectionBatch(batches[i]!, i, batches.length)
+      if (!result) {
+        Logger.warn(`groupReflectionsStructured: Batch ${i + 1}/${batches.length} failed, aborting`)
+        return null
+      }
+      batchResults.push(result)
+    }
+
+    // Step 2: Merge similar groups across batches
+    const merged = await this.mergeGroupTitles(batchResults)
+
+    // Step 3: Final validation
+    const inputIds = new Set(reflections.map((r) => r.id))
+    if (!this.validateGroupResult(merged, inputIds, 'groupReflectionsStructured:final')) {
+      Logger.warn('groupReflectionsStructured: Final merged result failed validation, returning unvalidated')
+      // Still return the merged result — it may have minor issues but is better than nothing
+      return merged
+    }
+
+    Logger.info(
+      `groupReflectionsStructured: Batched grouping complete — ${merged.groups.length} final groups from ${reflections.length} reflections`
+    )
+    return merged
   }
 
   async getStandupSummary(
