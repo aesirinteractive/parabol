@@ -85,8 +85,13 @@ class OpenAIServerManager {
       top_p: this.topP
     })
 
-    const finishReason = response.choices[0]?.finish_reason ?? null
+    let finishReason = response.choices[0]?.finish_reason ?? null
     const usage = response.usage
+    // Some LLMs (e.g. via LiteLLM) report "stop" even when hitting max_tokens
+    if (finishReason === 'stop' && usage?.completion_tokens && usage.completion_tokens >= this.maxTokens) {
+      Logger.warn(`${label}: finish_reason=stop but completion_tokens=${usage.completion_tokens} >= max_tokens=${this.maxTokens}, treating as truncated`)
+      finishReason = 'length'
+    }
     Logger.info(
       `${label}: Response received. finish_reason=${finishReason}, tokens=${JSON.stringify(usage)}`
     )
