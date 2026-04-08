@@ -66,7 +66,10 @@ class OpenAIServerManager {
     }
   }
 
-  private async callLLM(prompt: string, label: string): Promise<string | null> {
+  private async callLLM(
+    prompt: string,
+    label: string
+  ): Promise<{content: string; finishReason: string | null} | null> {
     if (!this.openAIApi) return null
     const baseURL = this.openAIApi.baseURL
     Logger.info(
@@ -82,7 +85,7 @@ class OpenAIServerManager {
       top_p: this.topP
     })
 
-    const finishReason = response.choices[0]?.finish_reason
+    const finishReason = response.choices[0]?.finish_reason ?? null
     const usage = response.usage
     Logger.info(
       `${label}: Response received. finish_reason=${finishReason}, tokens=${JSON.stringify(usage)}`
@@ -93,7 +96,7 @@ class OpenAIServerManager {
       Logger.warn(`${label}: LLM returned empty content`)
       return null
     }
-    return rawContent
+    return {content: rawContent, finishReason}
   }
 
   private repairGroupResult(
@@ -174,15 +177,38 @@ Return JSON: { "groups": [{ "title": "...", "reflectionIds": ["id1", "id2"] }] }
   private async groupReflectionBatch(
     batch: GroupReflectionsInput[],
     batchIndex: number,
-    totalBatches: number
+    totalBatches: number,
+    depth = 0
   ): Promise<GroupReflectionsResult | null> {
-    const label = `groupBatch[${batchIndex + 1}/${totalBatches}]`
+    const label = `groupBatch[${batchIndex + 1}/${totalBatches}${depth > 0 ? `:d${depth}` : ''}]`
     Logger.info(`${label}: Grouping ${batch.length} reflections...`)
 
     try {
       const prompt = this.buildGroupingPrompt(batch)
-      const rawContent = await this.callLLM(prompt, label)
-      if (!rawContent) return null
+      const result = await this.callLLM(prompt, label)
+      if (!result) return null
+
+      const {content: rawContent, finishReason} = result
+
+      // Detect truncation and retry with smaller batches
+      if (finishReason === 'length') {
+        if (batch.length <= 2 || depth >= 5) {
+          Logger.warn(`${label}: Truncated and cannot split further (size=${batch.length}, depth=${depth})`)
+          return null
+        }
+        const mid = Math.ceil(batch.length / 2)
+        const firstHalf = batch.slice(0, mid)
+        const secondHalf = batch.slice(mid)
+        Logger.warn(
+          `${label}: Truncated (finish_reason=length), splitting into sub-batches of ${firstHalf.length} and ${secondHalf.length}`
+        )
+        const [result1, result2] = await Promise.all([
+          this.groupReflectionBatch(firstHalf, batchIndex, totalBatches, depth + 1),
+          this.groupReflectionBatch(secondHalf, batchIndex, totalBatches, depth + 1)
+        ])
+        if (!result1 || !result2) return null
+        return {groups: [...result1.groups, ...result2.groups]}
+      }
 
       const parsed = this.parseLLMJson<GroupReflectionsResult>(rawContent, label)
       if (!parsed) return null
@@ -222,11 +248,12 @@ Return JSON: { "merges": [{ "finalTitle": "...", "groupIndices": [0, 3, 7] }] }
 Every group index (0 to ${allGroups.length - 1}) must appear in exactly one merge entry.`
 
     try {
-      const rawContent = await this.callLLM(prompt, label)
-      if (!rawContent) {
+      const result = await this.callLLM(prompt, label)
+      if (!result) {
         Logger.warn(`${label}: LLM merge failed, returning unmerged groups`)
         return {groups: allGroups}
       }
+      const {content: rawContent} = result
 
       type MergeResult = {merges: {finalTitle: string; groupIndices: number[]}[]}
       const parsed = this.parseLLMJson<MergeResult>(rawContent, label)
@@ -278,14 +305,19 @@ Every group index (0 to ${allGroups.length - 1}) must appear in exactly one merg
       try {
         const prompt = this.buildGroupingPrompt(reflections)
         const label = 'groupReflectionsStructured'
-        const rawContent = await this.callLLM(prompt, label)
-        if (!rawContent) return null
+        const result = await this.callLLM(prompt, label)
+        if (!result) return null
 
-        const parsed = this.parseLLMJson<GroupReflectionsResult>(rawContent, label)
-        if (!parsed) return null
+        // If truncated in single-call mode, fall through to batched approach
+        if (result.finishReason === 'length') {
+          Logger.warn(`${label}: Single-call truncated, falling through to batched approach`)
+        } else {
+          const parsed = this.parseLLMJson<GroupReflectionsResult>(result.content, label)
+          if (!parsed) return null
 
-        const inputIds = new Set(reflections.map((r) => r.id))
-        return this.repairGroupResult(parsed, inputIds, label)
+          const inputIds = new Set(reflections.map((r) => r.id))
+          return this.repairGroupResult(parsed, inputIds, label)
+        }
       } catch (e) {
         const error =
           e instanceof Error ? e : new Error('OpenAI failed to groupReflectionsStructured')
@@ -309,8 +341,11 @@ Every group index (0 to ${allGroups.length - 1}) must appear in exactly one merg
     for (let i = 0; i < batches.length; i++) {
       const result = await this.groupReflectionBatch(batches[i]!, i, batches.length)
       if (!result) {
-        Logger.warn(`groupReflectionsStructured: Batch ${i + 1}/${batches.length} failed, aborting`)
-        return null
+        Logger.warn(`groupReflectionsStructured: Batch ${i + 1}/${batches.length} failed, adding reflections as ungrouped`)
+        batchResults.push({
+          groups: batches[i]!.map((r) => ({title: 'Ungrouped', reflectionIds: [r.id]}))
+        })
+        continue
       }
       batchResults.push(result)
     }

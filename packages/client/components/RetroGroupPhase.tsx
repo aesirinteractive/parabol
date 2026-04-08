@@ -14,6 +14,7 @@ import useMutationProps from '../hooks/useMutationProps'
 import useTooltip from '../hooks/useTooltip'
 import AutogroupMutation from '../mutations/AutogroupMutation'
 import RegenerateGroupsMutation from '../mutations/RegenerateGroupsMutation'
+import ResetReflectionGroupsMutation from '../mutations/ResetReflectionGroupsMutation'
 import {Elevation} from '../styles/elevation'
 import {Threshold} from '../types/constEnums'
 import {phaseLabelLookup} from '../utils/meetings/lookups'
@@ -25,6 +26,7 @@ import MeetingTopBar from './MeetingTopBar'
 import PhaseHeaderDescription from './PhaseHeaderDescription'
 import PhaseHeaderTitle from './PhaseHeaderTitle'
 import PhaseWrapper from './PhaseWrapper'
+import FlatButton from './FlatButton'
 import PrimaryButton from './PrimaryButton'
 import type {RetroMeetingPhaseProps} from './RetroMeeting'
 import StageTimerDisplay from './StageTimerDisplay'
@@ -39,6 +41,11 @@ const StyledButton = styled(PrimaryButton)({
   '&:hover, &:focus': {
     boxShadow: Elevation.Z2
   }
+})
+
+const StyledUndoButton = styled(FlatButton)({
+  fontWeight: 600,
+  marginLeft: 8
 })
 
 interface Props extends RetroMeetingPhaseProps {
@@ -63,6 +70,9 @@ const RetroGroupPhase = (props: Props) => {
         autogroupReflectionGroups {
           groupTitle
         }
+        resetReflectionGroups {
+          groupTitle
+        }
         organization {
           tier
           useAI
@@ -83,6 +93,7 @@ const RetroGroupPhase = (props: Props) => {
     showSidebar,
     organization,
     autogroupReflectionGroups,
+    resetReflectionGroups,
     localStage,
     team
   } = meeting
@@ -125,6 +136,10 @@ const RetroGroupPhase = (props: Props) => {
     RegenerateGroupsMutation(atmosphere, {meetingId}, {onError, onCompleted})
   }
 
+  const handleUndoGroupClick = () => {
+    ResetReflectionGroupsMutation(atmosphere, {meetingId}, {onError, onCompleted})
+  }
+
   return (
     <>
       {/* select-none is for Safari. Repro: drag a card & see the whole area get highlighted */}
@@ -162,6 +177,11 @@ const RetroGroupPhase = (props: Props) => {
                 >
                   <InfoIcon />
                 </div>
+                {resetReflectionGroups && resetReflectionGroups.length > 0 && isGroupPhaseActive && (
+                  <StyledUndoButton onClick={handleUndoGroupClick} palette={'mid'}>
+                    {'Undo AI Groups'}
+                  </StyledUndoButton>
+                )}
               </ButtonWrapper>
             )}
           </MeetingTopBar>
