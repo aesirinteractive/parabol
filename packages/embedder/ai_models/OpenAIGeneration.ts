@@ -6,7 +6,7 @@ import {
   type GenerationOptions
 } from './AbstractGenerationModel'
 
-export type ModelId = 'gpt-3.5-turbo-0125' | 'gpt-4-turbo-preview'
+export type ModelId = 'gpt-3.5-turbo-0125' | 'gpt-4-turbo-preview' | 'Qwen3-30B-Instruct'
 
 type OpenAIGenerationOptions = Omit<GenerationOptions, 'topK'>
 
@@ -16,6 +16,9 @@ const modelIdDefinitions: Record<ModelId, GenerationModelParams> = {
   },
   'gpt-4-turbo-preview': {
     maxInputTokens: 128000
+  },
+  'Qwen3-30B-Instruct': {
+    maxInputTokens: 32768
   }
 }
 
@@ -25,13 +28,15 @@ export class OpenAIGeneration extends AbstractGenerationModel {
 
   constructor(modelId: string, url: string) {
     super(modelId, url)
-    if (!process.env.OPEN_AI_API_KEY) {
+    const apiKey = process.env.AI_GENERATION_API_KEY || process.env.OPEN_AI_API_KEY
+    if (!apiKey) {
       this.openAIApi = null
       return
     }
     this.openAIApi = new OpenAI({
-      apiKey: process.env.OPEN_AI_API_KEY,
-      organization: process.env.OPEN_AI_ORG_ID
+      apiKey,
+      ...(url && {baseURL: url}),
+      ...(process.env.OPEN_AI_ORG_ID && {organization: process.env.OPEN_AI_ORG_ID})
     })
   }
 

@@ -49,6 +49,7 @@ const startRetrospective: MutationResolvers['startRetrospective'] = async (
     totalVotes,
     maxVotesPerGroup,
     disableAnonymity,
+    facilitatorOnlyComments,
     videoMeetingURL
   } = meetingSettings as typeof meetingSettings & {
     meetingType: 'retrospective'
@@ -64,6 +65,7 @@ const startRetrospective: MutationResolvers['startRetrospective'] = async (
       totalVotes,
       maxVotesPerGroup,
       disableAnonymity,
+      facilitatorOnlyComments,
       templateId: selectedTemplateId,
       videoMeetingURL: videoMeetingURL ?? undefined,
       name: meetingName

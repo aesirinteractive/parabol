@@ -68,6 +68,18 @@ const addComment: MutationResolvers['addComment'] = async (
     dataLoader.get('users').loadNonNull(viewerId)
   ])
 
+  if (!viewerMeetingMember) {
+    return {error: {message: 'Not a member of the meeting'}}
+  }
+
+  if (
+    meeting.meetingType === 'retrospective' &&
+    meeting.facilitatorOnlyComments &&
+    viewerId !== meeting.facilitatorUserId
+  ) {
+    return {error: {message: 'Only the facilitator can comment in this meeting'}}
+  }
+
   // VALIDATION
   const content = convertToTipTap(comment.content)
   const plaintextContent = generateText(content, serverTipTapExtensions)

@@ -116,6 +116,12 @@ export const modelIdDefinitions = {
     // Also, since we're using this for embeddings, we want chunks to have more meaning. No soup.
     tableSuffix: 'qwen3_600M',
     languages: qwen3Languages
+  },
+  'Qwen3-Embedding-8B': {
+    embeddingDimensions: 2048,
+    precision: 16,
+    tableSuffix: 'qwen3_8B',
+    languages: qwen3Languages
   }
 } satisfies Record<string, EmbeddingModelParams>
 

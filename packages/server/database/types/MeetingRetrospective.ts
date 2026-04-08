@@ -13,6 +13,7 @@ interface Input {
   totalVotes: number
   maxVotesPerGroup: number
   disableAnonymity: boolean
+  facilitatorOnlyComments: boolean
   transcription?: TranscriptBlock[] | null
   autogroupReflectionGroups?: AutogroupReflectionGroupType[] | null
   resetReflectionGroups?: AutogroupReflectionGroupType[] | null
@@ -29,6 +30,7 @@ export default class MeetingRetrospective extends Meeting {
   totalVotes: number
   maxVotesPerGroup: number
   disableAnonymity: boolean
+  facilitatorOnlyComments: boolean
   // end meeting stats
   commentCount?: number
   taskCount?: number
@@ -53,6 +55,7 @@ export default class MeetingRetrospective extends Meeting {
       totalVotes,
       maxVotesPerGroup,
       disableAnonymity,
+      facilitatorOnlyComments,
       transcription,
       autogroupReflectionGroups,
       resetReflectionGroups,
@@ -76,6 +79,7 @@ export default class MeetingRetrospective extends Meeting {
     this.maxVotesPerGroup = maxVotesPerGroup
     this.templateId = templateId
     this.disableAnonymity = disableAnonymity
+    this.facilitatorOnlyComments = facilitatorOnlyComments
     this.transcription = transcription
     this.autogroupReflectionGroups = autogroupReflectionGroups
     this.resetReflectionGroups = resetReflectionGroups

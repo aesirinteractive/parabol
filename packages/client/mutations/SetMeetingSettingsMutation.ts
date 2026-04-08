@@ -9,6 +9,7 @@ graphql`
       phaseTypes
       ... on RetrospectiveMeetingSettings {
         disableAnonymity
+        facilitatorOnlyComments
         videoMeetingURL
       }
 
@@ -22,6 +23,7 @@ const mutation = graphql`
     $checkinEnabled: Boolean
     $teamHealthEnabled: Boolean
     $disableAnonymity: Boolean
+    $facilitatorOnlyComments: Boolean
     $videoMeetingURL: String
   ) {
     setMeetingSettings(
@@ -29,6 +31,7 @@ const mutation = graphql`
       checkinEnabled: $checkinEnabled
       teamHealthEnabled: $teamHealthEnabled
       disableAnonymity: $disableAnonymity
+      facilitatorOnlyComments: $facilitatorOnlyComments
       videoMeetingURL: $videoMeetingURL
     ) {
       ...SetMeetingSettingsMutation_team @relay(mask: false)
@@ -51,7 +54,7 @@ const SetMeetingSettingsMutation: StandardMutation<TSetMeetingSettingsMutation> 
     onCompleted,
     onError,
     optimisticUpdater: (store) => {
-      const {checkinEnabled, disableAnonymity, settingsId} = variables
+      const {checkinEnabled, disableAnonymity, facilitatorOnlyComments, settingsId} = variables
       const settings = store.get<Settings>(settingsId)
       if (!settings) return
 
@@ -69,6 +72,10 @@ const SetMeetingSettingsMutation: StandardMutation<TSetMeetingSettingsMutation> 
 
       if (disableAnonymity !== undefined) {
         settings.setValue(disableAnonymity, 'disableAnonymity')
+      }
+
+      if (facilitatorOnlyComments !== undefined) {
+        settings.setValue(facilitatorOnlyComments, 'facilitatorOnlyComments')
       }
     }
   })

@@ -10,7 +10,7 @@ import type {MutationResolvers, NewMeetingPhaseTypeEnum} from '../resolverTypes'
 
 const setMeetingSettings: MutationResolvers['setMeetingSettings'] = async (
   _source,
-  {settingsId, checkinEnabled, teamHealthEnabled, disableAnonymity, videoMeetingURL},
+  {settingsId, checkinEnabled, teamHealthEnabled, disableAnonymity, facilitatorOnlyComments, videoMeetingURL},
   {authToken, dataLoader, socketId: mutatorId}
 ) => {
   const operationId = dataLoader.share()
@@ -46,6 +46,9 @@ const setMeetingSettings: MutationResolvers['setMeetingSettings'] = async (
       ...phaseTypes.filter((phase) => phase !== 'checkin' && phase !== 'TEAM_HEALTH')
     ],
     disableAnonymity: isNotNull(disableAnonymity) ? disableAnonymity : settings.disableAnonymity,
+    facilitatorOnlyComments: isNotNull(facilitatorOnlyComments)
+      ? facilitatorOnlyComments
+      : settings.facilitatorOnlyComments,
     videoMeetingURL: hasTranscriptFlag
       ? isNotNull(videoMeetingURL)
         ? videoMeetingURL

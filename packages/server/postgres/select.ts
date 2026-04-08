@@ -185,6 +185,7 @@ export const selectMeetingSettings = () => {
           maxVotesPerGroup: NotNull
           totalVotes: NotNull
           disableAnonymity: NotNull
+          facilitatorOnlyComments: NotNull
         }
     >()
   return query as AssertedQuery<
@@ -237,6 +238,7 @@ export const selectNewMeetings = () =>
       'totalVotes',
       'maxVotesPerGroup',
       'disableAnonymity',
+      'facilitatorOnlyComments',
       'commentCount',
       'taskCount',
       'agendaItemCount',

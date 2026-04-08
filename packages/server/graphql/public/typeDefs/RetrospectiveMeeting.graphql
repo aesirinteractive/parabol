@@ -48,6 +48,11 @@ type RetrospectiveMeeting implements NewMeeting {
   disableAnonymity: Boolean!
 
   """
+  Restricts comments in the discuss phase to the facilitator only
+  """
+  facilitatorOnlyComments: Boolean!
+
+  """
   The timestamp the meeting officially ended
   """
   endedAt: DateTime

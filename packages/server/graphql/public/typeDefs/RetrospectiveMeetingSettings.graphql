@@ -40,6 +40,11 @@ type RetrospectiveMeetingSettings implements TeamMeetingSettings {
   disableAnonymity: Boolean!
 
   """
+  Restricts comments in the discuss phase to the facilitator only
+  """
+  facilitatorOnlyComments: Boolean!
+
+  """
   FK. The template that will be used to start the retrospective
   """
   selectedTemplateId: ID!

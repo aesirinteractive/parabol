@@ -13,6 +13,7 @@ import {MenuPosition} from '../hooks/useCoords'
 import useMutationProps from '../hooks/useMutationProps'
 import useTooltip from '../hooks/useTooltip'
 import AutogroupMutation from '../mutations/AutogroupMutation'
+import RegenerateGroupsMutation from '../mutations/RegenerateGroupsMutation'
 import {Elevation} from '../styles/elevation'
 import {Threshold} from '../types/constEnums'
 import {phaseLabelLookup} from '../utils/meetings/lookups'
@@ -120,6 +121,10 @@ const RetroGroupPhase = (props: Props) => {
     AutogroupMutation(atmosphere, {meetingId}, {onError, onCompleted})
   }
 
+  const handleRetryGroupClick = () => {
+    RegenerateGroupsMutation(atmosphere, {meetingId}, {onError, onCompleted})
+  }
+
   return (
     <>
       {/* select-none is for Safari. Repro: drag a card & see the whole area get highlighted */}
@@ -136,13 +141,19 @@ const RetroGroupPhase = (props: Props) => {
             </PhaseHeaderDescription>
             {useAI && (
               <ButtonWrapper>
-                <StyledButton
-                  disabled={autogroupStatus !== 'ready'}
-                  waiting={autogroupStatus === 'loading'}
-                  onClick={handleAutoGroupClick}
-                >
-                  {autogroupStatus === 'loading' ? 'AI thinking...' : 'Suggest Groups ✨'}
-                </StyledButton>
+                {autogroupStatus === 'error' ? (
+                  <StyledButton onClick={handleRetryGroupClick}>
+                    {'Retry Suggest Groups ✨'}
+                  </StyledButton>
+                ) : (
+                  <StyledButton
+                    disabled={autogroupStatus !== 'ready'}
+                    waiting={autogroupStatus === 'loading'}
+                    onClick={handleAutoGroupClick}
+                  >
+                    {autogroupStatus === 'loading' ? 'AI thinking...' : 'Suggest Groups ✨'}
+                  </StyledButton>
+                )}
                 <div
                   onMouseEnter={openTooltip}
                   onMouseLeave={closeTooltip}

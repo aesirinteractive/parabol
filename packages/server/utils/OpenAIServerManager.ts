@@ -2,6 +2,7 @@ import OpenAI from 'openai'
 import type {ModifyType} from '../graphql/public/resolverTypes'
 import type {RetroReflection} from '../postgres/types'
 import logError from './logError'
+import {Logger} from './Logger'
 
 type InsightResponse = {
   wins: string[]
@@ -23,15 +24,21 @@ type GroupReflectionsResult = {
 
 class OpenAIServerManager {
   openAIApi
+  defaultModel: string
   constructor() {
-    if (!process.env.OPEN_AI_API_KEY) {
+    const apiKey = process.env.AI_GENERATION_API_KEY || process.env.OPEN_AI_API_KEY
+    if (!apiKey) {
       this.openAIApi = null
+      this.defaultModel = ''
       return
     }
+    const baseURL = process.env.AI_GENERATION_BASE_URL || undefined
     this.openAIApi = new OpenAI({
-      apiKey: process.env.OPEN_AI_API_KEY,
-      organization: process.env.OPEN_AI_ORG_ID
+      apiKey,
+      ...(baseURL && {baseURL}),
+      ...(process.env.OPEN_AI_ORG_ID && {organization: process.env.OPEN_AI_ORG_ID})
     })
+    this.defaultModel = process.env.AI_GENERATION_DEFAULT_MODEL || 'gpt-4o'
   }
 
   async groupReflectionsStructured(
@@ -63,7 +70,7 @@ Return JSON: { "groups": [{ "title": "...", "reflectionIds": ["id1", "id2"] }] }
 
     try {
       const response = await this.openAIApi.chat.completions.create({
-        model: 'gpt-5-mini',
+        model: this.defaultModel,
         messages: [
           {
             role: 'user',
@@ -73,30 +80,62 @@ Return JSON: { "groups": [{ "title": "...", "reflectionIds": ["id1", "id2"] }] }
         response_format: {type: 'json_object'}
       })
 
-      const content = response.choices[0]?.message?.content
-      if (!content) return null
+      const rawContent = response.choices[0]?.message?.content
+      if (!rawContent) {
+        Logger.warn('groupReflectionsStructured: LLM returned empty content')
+        return null
+      }
+
+      // Strip markdown fences that local LLMs sometimes add
+      const fenceMatch = rawContent.match(/^[\s\S]*?```(?:json)?\s*\n?([\s\S]*?)\n?\s*```[\s\S]*$/)
+      const content = fenceMatch ? fenceMatch[1]!.trim() : rawContent.trim()
 
       let parsed: GroupReflectionsResult
       try {
         parsed = JSON.parse(content)
       } catch {
-        logError(new Error('Failed to parse groupReflectionsStructured JSON response'))
+        Logger.warn(
+          `groupReflectionsStructured: Failed to parse JSON response: ${rawContent.slice(0, 500)}`
+        )
         return null
       }
 
-      if (!parsed.groups || !Array.isArray(parsed.groups)) return null
+      if (!parsed.groups || !Array.isArray(parsed.groups)) {
+        Logger.warn(
+          `groupReflectionsStructured: Response missing valid groups array, got keys: ${Object.keys(parsed).join(', ')}`
+        )
+        return null
+      }
 
       // Validate every input ID appears exactly once
       const inputIds = new Set(reflections.map((r) => r.id))
       const outputIds = new Set<string>()
       for (const group of parsed.groups) {
-        if (!group.title || !Array.isArray(group.reflectionIds)) return null
+        if (!group.title || !Array.isArray(group.reflectionIds)) {
+          Logger.warn(
+            `groupReflectionsStructured: Group missing title or reflectionIds: ${JSON.stringify(group).slice(0, 200)}`
+          )
+          return null
+        }
         for (const id of group.reflectionIds) {
-          if (!inputIds.has(id) || outputIds.has(id)) return null
+          if (!inputIds.has(id)) {
+            Logger.warn(`groupReflectionsStructured: Unknown reflection ID in response: ${id}`)
+            return null
+          }
+          if (outputIds.has(id)) {
+            Logger.warn(`groupReflectionsStructured: Duplicate reflection ID in response: ${id}`)
+            return null
+          }
           outputIds.add(id)
         }
       }
-      if (outputIds.size !== inputIds.size) return null
+      if (outputIds.size !== inputIds.size) {
+        const missingIds = [...inputIds].filter((id) => !outputIds.has(id))
+        Logger.warn(
+          `groupReflectionsStructured: Not all reflections assigned. Missing: ${missingIds.join(', ')}`
+        )
+        return null
+      }
 
       return parsed
     } catch (e) {
@@ -126,7 +165,7 @@ Return JSON: { "groups": [{ "title": "...", "reflectionIds": ["id1", "id2"] }] }
 
     try {
       const response = await this.openAIApi.chat.completions.create({
-        model: 'gpt-4o',
+        model: this.defaultModel,
         messages: [
           {
             role: 'user',
@@ -176,7 +215,7 @@ Return JSON: { "groups": [{ "title": "...", "reflectionIds": ["id1", "id2"] }] }
       .join('\n')}`
     try {
       const response = await this.openAIApi.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: this.defaultModel,
         messages: [
           {
             role: 'user',
@@ -219,7 +258,7 @@ Return JSON: { "groups": [{ "title": "...", "reflectionIds": ["id1", "id2"] }] }
 
     try {
       const response = await this.openAIApi.chat.completions.create({
-        model: 'gpt-4',
+        model: this.defaultModel,
         messages: [
           {
             role: 'user',
@@ -323,7 +362,7 @@ Return the analysis as a JSON object with this structure:
 
     try {
       const response = await this.openAIApi.chat.completions.create({
-        model: 'gpt-4o',
+        model: this.defaultModel,
         messages: [
           {
             role: 'user',
@@ -380,7 +419,7 @@ Return the analysis as a JSON object with this structure:
 
     try {
       const response = await this.openAIApi.chat.completions.create({
-        model: 'gpt-4o',
+        model: this.defaultModel,
         messages: [
           {
             role: 'user',
@@ -413,7 +452,7 @@ Important: Respond with ONLY the title itself. Do not include any prefixes like 
 
     try {
       const response = await this.openAIApi.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: this.defaultModel,
         messages: [
           {
             role: 'user',

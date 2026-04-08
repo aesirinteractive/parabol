@@ -23,6 +23,7 @@ import sortByTier from '../../utils/sortByTier'
 import FlatPrimaryButton from '../FlatPrimaryButton'
 import NewMeetingActionsCurrentMeetings from '../NewMeetingActionsCurrentMeetings'
 import NewMeetingSettingsToggleAnonymity from '../NewMeetingSettingsToggleAnonymity'
+import NewMeetingSettingsToggleFacilitatorOnlyComments from '../NewMeetingSettingsToggleFacilitatorOnlyComments'
 import NewMeetingSettingsToggleCheckIn from '../NewMeetingSettingsToggleCheckIn'
 import NewMeetingSettingsToggleTeamHealth from '../NewMeetingSettingsToggleTeamHealth'
 import NewMeetingTeamPicker from '../NewMeetingTeamPicker'
@@ -81,6 +82,7 @@ const ActivityDetailsSidebar = (props: Props) => {
           ...NewMeetingSettingsToggleCheckIn_settings
           ...NewMeetingSettingsToggleTeamHealth_settings
           ...NewMeetingSettingsToggleAnonymity_settings
+          ...NewMeetingSettingsToggleFacilitatorOnlyComments_settings
         }
         pokerSettings: meetingSettings(meetingType: poker) {
           ...NewMeetingSettingsToggleCheckIn_settings
@@ -304,6 +306,7 @@ const ActivityDetailsSidebar = (props: Props) => {
                     teamRef={selectedTeam}
                   />
                   <NewMeetingSettingsToggleAnonymity settingsRef={selectedTeam.retroSettings} />
+                  <NewMeetingSettingsToggleFacilitatorOnlyComments settingsRef={selectedTeam.retroSettings} />
                 </>
               )}
               {type === 'poker' && (

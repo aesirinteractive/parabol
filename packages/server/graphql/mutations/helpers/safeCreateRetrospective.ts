@@ -13,6 +13,7 @@ const safeCreateRetrospective = async (
     totalVotes: number
     maxVotesPerGroup: number
     disableAnonymity: boolean
+    facilitatorOnlyComments: boolean
     templateId: string
     videoMeetingURL?: string
     meetingSeriesId?: number

@@ -32,7 +32,7 @@ const generateGroups = async (reflections: RetroReflection[], teamId: string) =>
   }))
   const result = await manager.groupReflectionsStructured(input)
   if (!result) {
-    Logger.warn('OpenAI was unable to group the reflections')
+    Logger.warn(`OpenAI was unable to group the reflections for meeting ${meetingId} (team: ${teamId})`)
     await getKysely()
       .updateTable('NewMeeting')
       .set({autogroupReflectionGroups: JSON.stringify([])})

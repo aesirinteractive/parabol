@@ -3,6 +3,7 @@ import util from 'util'
 import {SubscriptionChannel, Threshold} from '../../../../client/types/constEnums'
 import {EMAIL_CORS_OPTIONS} from '../../../../client/types/cors'
 import makeAppURL from '../../../../client/utils/makeAppURL'
+import TeamMemberId from '../../../../client/shared/gqlIds/TeamMemberId'
 import {isNotNull} from '../../../../client/utils/predicates'
 import appOrigin from '../../../appOrigin'
 import getMailManager from '../../../email/getMailManager'
@@ -10,6 +11,7 @@ import teamInviteEmailCreator from '../../../email/teamInviteEmailCreator'
 import generateUID from '../../../generateUID'
 import getKysely from '../../../postgres/getKysely'
 import {getUsersByEmails} from '../../../postgres/queries/getUsersByEmails'
+import acceptTeamInvitationSafe from '../../../safeMutations/acceptTeamInvitation'
 import removeSuggestedAction from '../../../safeMutations/removeSuggestedAction'
 import {analytics} from '../../../utils/analytics/analytics'
 import {getUserId} from '../../../utils/authorization'
@@ -117,129 +119,169 @@ const inviteToTeamHelper = async (
   if (newAllowedInvitees.length === 0) {
     return {error: {message: 'Email is not approved by organization'}}
   }
-  const tokens = await Promise.all(
-    newAllowedInvitees.map(async () => (await randomBytes(48)).toString('hex'))
+
+  // Partition invitees: existing org users get added directly, others get invitations
+  const existingOrgUsers: {email: string; userId: string}[] = []
+  const inviteesNeedingEmail: string[] = []
+
+  await Promise.all(
+    newAllowedInvitees.map(async (email) => {
+      const user = users.find((u) => u.email === email)
+      if (!user) {
+        inviteesNeedingEmail.push(email)
+        return
+      }
+      const orgUser = await dataLoader
+        .get('organizationUsersByUserIdOrgId')
+        .load({userId: user.id, orgId})
+      if (orgUser) {
+        existingOrgUsers.push({email, userId: user.id})
+      } else {
+        inviteesNeedingEmail.push(email)
+      }
+    })
   )
-  const expiresAt = new Date(Date.now() + Threshold.TEAM_INVITATION_LIFESPAN)
-  // insert invitation records
-  const teamInvitationsToInsert = newAllowedInvitees.map((email, idx) => ({
-    id: generateUID(),
-    expiresAt,
-    email,
-    invitedBy: viewerId,
-    meetingId: meetingId ?? undefined,
-    teamId,
-    token: tokens[idx]!,
-    isMassInvite: false,
-    createdAt: new Date(),
-    acceptedAt: null
-  }))
-  await pg.insertInto('TeamInvitation').values(teamInvitationsToInsert).execute()
+
+  // Directly add existing org users to the team
+  const directlyAddedEmails: string[] = []
+  for (const {email, userId} of existingOrgUsers) {
+    await acceptTeamInvitationSafe(team, userId, dataLoader)
+    const updatedUser = await dataLoader.get('users').loadNonNull(userId)
+    publish(SubscriptionChannel.NOTIFICATION, userId, 'AuthTokenPayload', {
+      tms: updatedUser.tms
+    })
+    const teamMemberId = TeamMemberId.join(teamId, userId)
+    publish(SubscriptionChannel.TEAM, teamId, 'JoinTeamSuccess', {teamId, teamMemberId}, subOptions)
+    directlyAddedEmails.push(email)
+  }
+
   // remove suggested action, if any
   let removedSuggestedActionId
   if (isOnboardTeam) {
     removedSuggestedActionId = await removeSuggestedAction(viewerId, 'inviteYourTeam')
   }
-  // insert notification records
-  const notificationsToInsert = teamInvitationsToInsert
-    .map((invitation) => {
-      const user = users.find((user) => user.email === invitation.email)
-      if (!user) return null
-      return {
-        id: generateUID(),
-        type: 'TEAM_INVITATION' as const,
-        userId: user.id,
-        invitationId: invitation.id,
-        teamId
-      }
-    })
-    .filter(isValid)
 
-  if (notificationsToInsert.length > 0) {
-    await pg.insertInto('Notification').values(notificationsToInsert).execute()
-  }
-
-  const bestMeeting = await getBestInvitationMeeting(teamId, meetingId ?? undefined, dataLoader)
-
-  // send emails
-  const searchParams = {
-    utm_source: 'invite email',
-    utm_medium: 'email',
-    utm_campaign: 'invitations'
-  }
-  const options = {searchParams}
-  const emailResults = await Promise.all(
-    teamInvitationsToInsert.map((invitation) => {
-      const user = users.find((user) => user.email === invitation.email)
-      const {html, subject, body} = teamInviteEmailCreator({
-        appOrigin,
-        inviteLink: makeAppURL(appOrigin, `team-invitation/${invitation.token}`, options),
-        inviteeName: user ? user.preferredName : '',
-        inviteeEmail: invitation.email,
-        inviterName: inviter.preferredName,
-        inviterEmail: inviter.email,
-        teamName,
-        meeting: bestMeeting,
-        corsOptions: EMAIL_CORS_OPTIONS
-      })
-      return getMailManager().sendEmail({
-        to: invitation.email,
-        html,
-        subject,
-        body,
-        tags: [
-          'type:teamInvitation',
-          `tier:${tier}`,
-          `team:${teamName}:${orgName}:${teamId}:${orgId}`
-        ]
-      })
-    })
-  )
-
-  const parabolUserEmails = users.map(({email}) => email)
-  const inviteTo = meetingId ? 'meeting' : 'team'
-  const now = new Date()
-  const tenSecondsAgo = new Date(now.getTime() - 10 * 1000)
-  const isInvitedOnCreation = createdAt > tenSecondsAgo // if the team was created in the last 10 seconds, we assume the invite was sent on creation
-  newAllowedInvitees.forEach(async (inviteeEmail, idx) => {
-    const isInviteeParabolUser = parabolUserEmails.includes(inviteeEmail)
-    const success = !!emailResults[idx]
-    analytics.inviteEmailSent(
-      inviter,
+  let successfulEmailInvitees: string[] = []
+  if (inviteesNeedingEmail.length > 0) {
+    const tokens = await Promise.all(
+      inviteesNeedingEmail.map(async () => (await randomBytes(48)).toString('hex'))
+    )
+    const expiresAt = new Date(Date.now() + Threshold.TEAM_INVITATION_LIFESPAN)
+    // insert invitation records
+    const teamInvitationsToInsert = inviteesNeedingEmail.map((email, idx) => ({
+      id: generateUID(),
+      expiresAt,
+      email,
+      invitedBy: viewerId,
+      meetingId: meetingId ?? undefined,
       teamId,
-      inviteeEmail,
-      isInviteeParabolUser,
-      inviteTo,
-      success,
-      isInvitedOnCreation
-    )
-  })
-  const successfulInvitees = newAllowedInvitees.filter((_email, idx) => emailResults[idx])
-  const data = {
-    removedSuggestedActionId,
-    teamId,
-    invitees: successfulInvitees
-  }
+      token: tokens[idx]!,
+      isMassInvite: false,
+      createdAt: new Date(),
+      acceptedAt: null
+    }))
+    await pg.insertInto('TeamInvitation').values(teamInvitationsToInsert).execute()
+    // insert notification records
+    const notificationsToInsert = teamInvitationsToInsert
+      .map((invitation) => {
+        const user = users.find((user) => user.email === invitation.email)
+        if (!user) return null
+        return {
+          id: generateUID(),
+          type: 'TEAM_INVITATION' as const,
+          userId: user.id,
+          invitationId: invitation.id,
+          teamId
+        }
+      })
+      .filter(isValid)
 
-  // Tell each invitee
-  notificationsToInsert.forEach((notification) => {
-    const {userId, id: teamInvitationNotificationId} = notification
-    const subscriberData = {
-      ...data,
-      teamInvitationNotificationId
+    if (notificationsToInsert.length > 0) {
+      await pg.insertInto('Notification').values(notificationsToInsert).execute()
     }
-    publish(
-      SubscriptionChannel.NOTIFICATION,
-      userId,
-      'InviteToTeamPayload',
-      subscriberData,
-      subOptions
+
+    const bestMeeting = await getBestInvitationMeeting(teamId, meetingId ?? undefined, dataLoader)
+
+    // send emails
+    const searchParams = {
+      utm_source: 'invite email',
+      utm_medium: 'email',
+      utm_campaign: 'invitations'
+    }
+    const options = {searchParams}
+    const emailResults = await Promise.all(
+      teamInvitationsToInsert.map((invitation) => {
+        const user = users.find((user) => user.email === invitation.email)
+        const {html, subject, body} = teamInviteEmailCreator({
+          appOrigin,
+          inviteLink: makeAppURL(appOrigin, `team-invitation/${invitation.token}`, options),
+          inviteeName: user ? user.preferredName : '',
+          inviteeEmail: invitation.email,
+          inviterName: inviter.preferredName,
+          inviterEmail: inviter.email,
+          teamName,
+          meeting: bestMeeting,
+          corsOptions: EMAIL_CORS_OPTIONS
+        })
+        return getMailManager().sendEmail({
+          to: invitation.email,
+          html,
+          subject,
+          body,
+          tags: [
+            'type:teamInvitation',
+            `tier:${tier}`,
+            `team:${teamName}:${orgName}:${teamId}:${orgId}`
+          ]
+        })
+      })
     )
-  })
+
+    const parabolUserEmails = users.map(({email}) => email)
+    const inviteTo = meetingId ? 'meeting' : 'team'
+    const now = new Date()
+    const tenSecondsAgo = new Date(now.getTime() - 10 * 1000)
+    const isInvitedOnCreation = createdAt > tenSecondsAgo
+    inviteesNeedingEmail.forEach(async (inviteeEmail, idx) => {
+      const isInviteeParabolUser = parabolUserEmails.includes(inviteeEmail)
+      const success = !!emailResults[idx]
+      analytics.inviteEmailSent(
+        inviter,
+        teamId,
+        inviteeEmail,
+        isInviteeParabolUser,
+        inviteTo,
+        success,
+        isInvitedOnCreation
+      )
+    })
+    successfulEmailInvitees = inviteesNeedingEmail.filter((_email, idx) => emailResults[idx])
+    const data = {
+      removedSuggestedActionId,
+      teamId,
+      invitees: successfulEmailInvitees
+    }
+
+    // Tell each invitee
+    notificationsToInsert.forEach((notification) => {
+      const {userId, id: teamInvitationNotificationId} = notification
+      const subscriberData = {
+        ...data,
+        teamInvitationNotificationId
+      }
+      publish(
+        SubscriptionChannel.NOTIFICATION,
+        userId,
+        'InviteToTeamPayload',
+        subscriberData,
+        subOptions
+      )
+    })
+  }
 
   return {
     removedSuggestedActionId,
-    invitees: successfulInvitees,
+    invitees: [...directlyAddedEmails, ...successfulEmailInvitees],
     teamId
   }
 }

@@ -11,7 +11,7 @@ export class OpenAIEmbedding extends AbstractEmbeddingsModel {
     this.url = url
     this.modelId = modelId as ModelId
     this.client = new OpenAI({
-      apiKey: 'vllm',
+      apiKey: process.env.AI_EMBEDDING_API_KEY || 'vllm',
       baseURL: url
     })
   }
@@ -37,7 +37,8 @@ export class OpenAIEmbedding extends AbstractEmbeddingsModel {
   public async getEmbedding(content: string): Promise<number[] | Error> {
     const {data} = await this.client.embeddings.create({
       input: content,
-      model: this.modelId
+      model: this.modelId,
+      dimensions: this.embeddingDimensions
     })
     return data[0]?.embedding ?? []
   }

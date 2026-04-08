@@ -1,0 +1,4 @@
+"""
+Return value for regenerateGroups, which could be an error
+"""
+union RegenerateGroupsPayload = ErrorPayload | RegenerateGroupsSuccess

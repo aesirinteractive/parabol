@@ -40,7 +40,10 @@ type BaseNewMeeting = Pick<
 
 export type RetrospectiveMeeting = BaseNewMeeting &
   NonNullableProps<
-    Pick<NewMeeting, 'totalVotes' | 'maxVotesPerGroup' | 'disableAnonymity' | 'templateId'>
+    Pick<
+      NewMeeting,
+      'totalVotes' | 'maxVotesPerGroup' | 'disableAnonymity' | 'facilitatorOnlyComments' | 'templateId'
+    >
   > &
   Pick<
     NewMeeting,

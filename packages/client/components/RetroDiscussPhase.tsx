@@ -4,6 +4,7 @@ import {ThumbUp} from '@mui/icons-material'
 import graphql from 'babel-plugin-relay/macro'
 import {useFragment} from 'react-relay'
 import type {RetroDiscussPhase_meeting$key} from '~/__generated__/RetroDiscussPhase_meeting.graphql'
+import useAtmosphere from '~/hooks/useAtmosphere'
 import useBreakpoint from '~/hooks/useBreakpoint'
 import useCallbackRef from '~/hooks/useCallbackRef'
 import EditorHelpModalContainer from '../containers/EditorHelpModalContainer/EditorHelpModalContainer'
@@ -147,6 +148,8 @@ const RetroDiscussPhase = (props: Props) => {
         ...DiscussionThreadListEmptyTranscriptState_meeting
         id
         endedAt
+        facilitatorUserId
+        facilitatorOnlyComments
         showTranscription
         transcription {
           speaker
@@ -172,6 +175,8 @@ const RetroDiscussPhase = (props: Props) => {
   const {
     id: meetingId,
     endedAt,
+    facilitatorUserId,
+    facilitatorOnlyComments,
     localStage,
     showSidebar,
     organization,
@@ -180,8 +185,14 @@ const RetroDiscussPhase = (props: Props) => {
   } = meeting
   const {reflectionGroup, discussionId} = localStage
   const isDesktop = useBreakpoint(Breakpoint.SINGLE_REFLECTION_COLUMN)
+  const {viewerId} = useAtmosphere()
+  const isFacilitator = viewerId === facilitatorUserId
   const title = reflectionGroup?.title ?? ''
-  const allowedThreadables: DiscussionThreadables[] = endedAt ? [] : ['comment', 'task', 'poll']
+  const allowedThreadables: DiscussionThreadables[] = endedAt
+    ? []
+    : facilitatorOnlyComments && !isFacilitator
+      ? ['task', 'poll']
+      : ['comment', 'task', 'poll']
 
   // Uncomment below code to enable Easter Egg:
   // bugs shown on screen when the discussion group title contains "bug"
