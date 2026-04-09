@@ -2,7 +2,7 @@ export type EmbeddingsModelType = 'text-embeddings-inference' | 'vllm'
 export type GenerationModelType = 'openai' | 'text-generation-inference'
 
 export interface ModelConfig {
-  model: `${EmbeddingsModelType | GenerationModelType}:${string}`
+  model: string
   url: string
   maxTokens: number
 }
@@ -22,16 +22,23 @@ export const parseModelEnvVars = (
   if (!Array.isArray(models)) {
     throw new Error(`Invalid Env Var: ${envVar}. Must be an array`)
   }
-  const strProperties = ['model', 'url']
+
+  const defaultUrl = process.env.AI_PROVIDER_BASE_URL || ''
+
   models.forEach((model, idx) => {
+    if (typeof model.model !== 'string') {
+      throw new Error(`Invalid Env Var: ${envVar}. Invalid "model" at index ${idx}`)
+    }
     if (typeof model.maxTokens !== 'number') {
       throw new Error(`Invalid Env Var: ${envVar}. Invalid "maxTokens" at index ${idx}`)
     }
-    strProperties.forEach((prop) => {
-      if (typeof model[prop] !== 'string') {
-        throw new Error(`Invalid Env Var: ${envVar}. Invalid "${prop}" at index ${idx}`)
-      }
-    })
+    // url is optional — falls back to AI_PROVIDER_BASE_URL
+    if (model.url == null) {
+      model.url = defaultUrl
+    }
+    if (typeof model.url !== 'string') {
+      throw new Error(`Invalid Env Var: ${envVar}. Invalid "url" at index ${idx}`)
+    }
   })
   return models
 }
