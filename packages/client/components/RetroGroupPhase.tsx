@@ -5,6 +5,7 @@
 import styled from '@emotion/styled'
 import {Info as InfoIcon} from '@mui/icons-material'
 import graphql from 'babel-plugin-relay/macro'
+import {useState} from 'react'
 import {useFragment} from 'react-relay'
 import type {RetroGroupPhase_meeting$key} from '~/__generated__/RetroGroupPhase_meeting.graphql'
 import useCallbackRef from '~/hooks/useCallbackRef'
@@ -47,6 +48,15 @@ const StyledUndoButton = styled(FlatButton)({
   marginLeft: 8
 })
 
+const ModelSelect = styled('select')({
+  marginLeft: 8,
+  padding: '4px 8px',
+  borderRadius: 4,
+  border: '1px solid #cbd5e1',
+  fontSize: 13,
+  cursor: 'pointer'
+})
+
 interface Props extends RetroMeetingPhaseProps {
   meeting: RetroGroupPhase_meeting$key
 }
@@ -72,6 +82,10 @@ const RetroGroupPhase = (props: Props) => {
         organization {
           useAI
         }
+        availableGroupingModels {
+          name
+          type
+        }
       }
     `,
     meetingRef
@@ -84,10 +98,12 @@ const RetroGroupPhase = (props: Props) => {
     showSidebar,
     organization,
     resetReflectionGroups,
-    localStage
+    localStage,
+    availableGroupingModels
   } = meeting
   const {useAI} = organization
   const isGroupPhaseActive = localStage?.phaseType === 'group' && !localStage?.isComplete
+  const [selectedModel, setSelectedModel] = useState(availableGroupingModels[0]?.name || '')
   const {openTooltip, closeTooltip, tooltipPortal, originRef} = useTooltip<HTMLDivElement>(
     MenuPosition.UPPER_CENTER
   )
@@ -98,7 +114,7 @@ const RetroGroupPhase = (props: Props) => {
   const handleAutoGroupClick = () => {
     if (submitting) return
     submitMutation()
-    AutogroupMutation(atmosphere, {meetingId}, {onError, onCompleted})
+    AutogroupMutation(atmosphere, {meetingId, modelName: selectedModel || undefined}, {onError, onCompleted})
   }
 
   const handleUndoGroupClick = () => {
@@ -129,7 +145,7 @@ const RetroGroupPhase = (props: Props) => {
             </PhaseHeaderDescription>
             {isGroupPhaseActive && (
               <ButtonWrapper>
-                {useAI && (
+                {useAI && availableGroupingModels.length > 0 && (
                   <>
                     <StyledButton
                       disabled={submitting}
@@ -138,6 +154,19 @@ const RetroGroupPhase = (props: Props) => {
                     >
                       {submitting ? 'AI thinking...' : 'Suggest Groups ✨'}
                     </StyledButton>
+                    {availableGroupingModels.length > 1 && (
+                      <ModelSelect
+                        value={selectedModel}
+                        onChange={(e) => setSelectedModel(e.target.value)}
+                        disabled={submitting}
+                      >
+                        {availableGroupingModels.map((m) => (
+                          <option key={m.name} value={m.name}>
+                            {m.name} ({m.type})
+                          </option>
+                        ))}
+                      </ModelSelect>
+                    )}
                     <div
                       onMouseEnter={openTooltip}
                       onMouseLeave={closeTooltip}

@@ -26,8 +26,8 @@ graphql`
 `
 
 const mutation = graphql`
-  mutation AutogroupMutation($meetingId: ID!) {
-    autogroup(meetingId: $meetingId) {
+  mutation AutogroupMutation($meetingId: ID!, $modelName: String) {
+    autogroup(meetingId: $meetingId, modelName: $modelName) {
       ... on ErrorPayload {
         error {
           message

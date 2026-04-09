@@ -13,6 +13,11 @@ type RetrospectiveMeeting implements NewMeeting {
   autogroupReflectionGroups: [AutogroupReflectionGroup!]
 
   """
+  The available AI models for grouping reflections
+  """
+  availableGroupingModels: [AIGroupingModel!]!
+
+  """
   The groups that existed before the autogrouping
   """
   resetReflectionGroups: [AutogroupReflectionGroup!]

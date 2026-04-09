@@ -1,0 +1,11 @@
+type AIGroupingModel {
+  """
+  The model name as configured in AI_GENERATION_MODELS or AI_EMBEDDING_MODELS
+  """
+  name: String!
+
+  """
+  Either "generative" or "embedding"
+  """
+  type: String!
+}

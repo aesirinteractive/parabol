@@ -1480,7 +1480,7 @@ type Mutation {
   """
   Creates suggested reflection groups using OpenAI
   """
-  autogroup(meetingId: ID!): AutogroupPayload!
+  autogroup(meetingId: ID!, modelName: String): AutogroupPayload!
 
   """
   Ungroups all reflections in a retrospective meeting, giving each its own group

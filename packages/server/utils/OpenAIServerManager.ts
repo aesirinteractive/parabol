@@ -1,6 +1,14 @@
 import OpenAI from 'openai'
 import type {ModifyType} from '../graphql/public/resolverTypes'
 import type {RetroReflection} from '../postgres/types'
+import {
+  getAIProviderConfig,
+  getGenerationModels,
+  getEmbeddingModels,
+  getGroupingBatchSize,
+  type GenerationModelConfig,
+  type EmbeddingModelConfig
+} from './aiModelsConfig'
 import logError from './logError'
 import {Logger} from './Logger'
 
@@ -23,34 +31,50 @@ type GroupReflectionsResult = {
 }
 
 class OpenAIServerManager {
-  openAIApi
+  openAIApi: OpenAI | null
+  generationModels: GenerationModelConfig[]
+  embeddingModels: EmbeddingModelConfig[]
   defaultModel: string
   groupingBatchSize: number
-  maxTokens: number
-  temperature: number
-  topP: number
   constructor() {
-    const apiKey = process.env.AI_GENERATION_API_KEY || process.env.OPEN_AI_API_KEY
-    if (!apiKey) {
+    const provider = getAIProviderConfig()
+    if (!provider) {
       this.openAIApi = null
+      this.generationModels = []
+      this.embeddingModels = []
       this.defaultModel = ''
       this.groupingBatchSize = 50
-      this.maxTokens = 4096
-      this.temperature = 0.3
-      this.topP = 1
       return
     }
-    const baseURL = process.env.AI_GENERATION_BASE_URL || undefined
     this.openAIApi = new OpenAI({
-      apiKey,
-      ...(baseURL && {baseURL}),
+      apiKey: provider.apiKey,
+      ...(provider.baseURL && {baseURL: provider.baseURL}),
       ...(process.env.OPEN_AI_ORG_ID && {organization: process.env.OPEN_AI_ORG_ID})
     })
-    this.defaultModel = process.env.AI_GENERATION_DEFAULT_MODEL || 'gpt-4o'
-    this.groupingBatchSize = parseInt(process.env.AI_GROUPING_BATCH_SIZE || '50', 10)
-    this.maxTokens = parseInt(process.env.AI_GENERATION_MAX_TOKENS || '4096', 10)
-    this.temperature = parseFloat(process.env.AI_GENERATION_TEMPERATURE || '0.3')
-    this.topP = parseFloat(process.env.AI_GENERATION_TOP_P || '1')
+    this.generationModels = getGenerationModels()
+    this.embeddingModels = getEmbeddingModels()
+    this.defaultModel = this.generationModels[0]?.model || 'gpt-4o'
+    this.groupingBatchSize = getGroupingBatchSize()
+  }
+
+  private getGenerationConfig(modelName?: string): GenerationModelConfig {
+    if (modelName) {
+      const found = this.generationModels.find((m) => m.model === modelName)
+      if (found) return found
+    }
+    return this.generationModels[0] || {model: this.defaultModel, maxTokens: 4096, temperature: 0.3, topP: 1}
+  }
+
+  private getEmbeddingConfig(modelName?: string): EmbeddingModelConfig | null {
+    if (modelName) {
+      const found = this.embeddingModels.find((m) => m.model === modelName)
+      if (found) return found
+    }
+    return this.embeddingModels[0] || null
+  }
+
+  private isEmbeddingModel(modelName: string): boolean {
+    return this.embeddingModels.some((m) => m.model === modelName)
   }
 
   private parseLLMJson<T>(rawContent: string, label: string): T | null {
@@ -68,28 +92,29 @@ class OpenAIServerManager {
 
   private async callLLM(
     prompt: string,
-    label: string
+    label: string,
+    config?: GenerationModelConfig
   ): Promise<{content: string; finishReason: string | null} | null> {
     if (!this.openAIApi) return null
+    const modelConfig = config || this.getGenerationConfig()
     const baseURL = this.openAIApi.baseURL
     Logger.info(
-      `${label}: Sending request to ${baseURL || 'OpenAI'} with model=${this.defaultModel}, prompt length=${prompt.length} chars`
+      `${label}: Sending request to ${baseURL || 'OpenAI'} with model=${modelConfig.model}, max_tokens=${modelConfig.maxTokens}, prompt length=${prompt.length} chars`
     )
 
     const response = await this.openAIApi.chat.completions.create({
-      model: this.defaultModel,
+      model: modelConfig.model,
       messages: [{role: 'user', content: prompt}],
       response_format: {type: 'json_object'},
-      max_tokens: this.maxTokens,
-      temperature: this.temperature,
-      top_p: this.topP
+      max_tokens: modelConfig.maxTokens,
+      temperature: modelConfig.temperature,
+      top_p: modelConfig.topP
     })
 
     let finishReason = response.choices[0]?.finish_reason ?? null
     const usage = response.usage
-    // Some LLMs (e.g. via LiteLLM) report "stop" even when hitting max_tokens
-    if (finishReason === 'stop' && usage?.completion_tokens && usage.completion_tokens >= this.maxTokens) {
-      Logger.warn(`${label}: finish_reason=stop but completion_tokens=${usage.completion_tokens} >= max_tokens=${this.maxTokens}, treating as truncated`)
+    if (finishReason === 'stop' && usage?.completion_tokens && usage.completion_tokens >= modelConfig.maxTokens) {
+      Logger.warn(`${label}: finish_reason=stop but completion_tokens=${usage.completion_tokens} >= max_tokens=${modelConfig.maxTokens}, treating as truncated`)
       finishReason = 'length'
     }
     Logger.info(
@@ -183,6 +208,7 @@ Return JSON: { "groups": [{ "title": "...", "reflectionIds": ["id1", "id2"] }] }
     batch: GroupReflectionsInput[],
     batchIndex: number,
     totalBatches: number,
+    genConfig: GenerationModelConfig,
     depth = 0
   ): Promise<GroupReflectionsResult | null> {
     const label = `groupBatch[${batchIndex + 1}/${totalBatches}${depth > 0 ? `:d${depth}` : ''}]`
@@ -190,7 +216,7 @@ Return JSON: { "groups": [{ "title": "...", "reflectionIds": ["id1", "id2"] }] }
 
     try {
       const prompt = this.buildGroupingPrompt(batch)
-      const result = await this.callLLM(prompt, label)
+      const result = await this.callLLM(prompt, label, genConfig)
       if (!result) return null
 
       const {content: rawContent, finishReason} = result
@@ -208,8 +234,8 @@ Return JSON: { "groups": [{ "title": "...", "reflectionIds": ["id1", "id2"] }] }
           `${label}: Truncated (finish_reason=length), splitting into sub-batches of ${firstHalf.length} and ${secondHalf.length}`
         )
         const [result1, result2] = await Promise.all([
-          this.groupReflectionBatch(firstHalf, batchIndex, totalBatches, depth + 1),
-          this.groupReflectionBatch(secondHalf, batchIndex, totalBatches, depth + 1)
+          this.groupReflectionBatch(firstHalf, batchIndex, totalBatches, genConfig, depth + 1),
+          this.groupReflectionBatch(secondHalf, batchIndex, totalBatches, genConfig, depth + 1)
         ])
         if (!result1 || !result2) return null
         return {groups: [...result1.groups, ...result2.groups]}
@@ -232,7 +258,8 @@ Return JSON: { "groups": [{ "title": "...", "reflectionIds": ["id1", "id2"] }] }
   }
 
   private async mergeGroupTitles(
-    batchResults: GroupReflectionsResult[]
+    batchResults: GroupReflectionsResult[],
+    genConfig?: GenerationModelConfig
   ): Promise<GroupReflectionsResult> {
     const allGroups = batchResults.flatMap((r) => r.groups)
     const label = 'mergeGroups'
@@ -253,7 +280,7 @@ Return JSON: { "merges": [{ "finalTitle": "...", "groupIndices": [0, 3, 7] }] }
 Every group index (0 to ${allGroups.length - 1}) must appear in exactly one merge entry.`
 
     try {
-      const result = await this.callLLM(prompt, label)
+      const result = await this.callLLM(prompt, label, genConfig)
       if (!result) {
         Logger.warn(`${label}: LLM merge failed, returning unmerged groups`)
         return {groups: allGroups}
@@ -299,18 +326,116 @@ Every group index (0 to ${allGroups.length - 1}) must appear in exactly one merg
     }
   }
 
+  private cosineSimilarity(a: number[], b: number[]): number {
+    let dot = 0, normA = 0, normB = 0
+    for (let i = 0; i < a.length; i++) {
+      dot += a[i]! * b[i]!
+      normA += a[i]! * a[i]!
+      normB += b[i]! * b[i]!
+    }
+    return dot / (Math.sqrt(normA) * Math.sqrt(normB))
+  }
+
+  private async getEmbeddings(texts: string[], config: EmbeddingModelConfig): Promise<number[][] | null> {
+    if (!this.openAIApi) return null
+    Logger.info(`getEmbeddings: Generating embeddings for ${texts.length} texts using model=${config.model}, dimensions=${config.dimensions}`)
+    try {
+      const response = await this.openAIApi.embeddings.create({
+        input: texts,
+        model: config.model,
+        dimensions: config.dimensions
+      })
+      Logger.info(`getEmbeddings: Received ${response.data.length} embeddings`)
+      return response.data.map((d) => d.embedding)
+    } catch (e) {
+      const error = e instanceof Error ? e : new Error('Failed to generate embeddings')
+      logError(error)
+      return null
+    }
+  }
+
+  private clusterByEmbeddings(
+    reflections: GroupReflectionsInput[],
+    embeddings: number[][],
+    threshold: number
+  ): string[][] {
+    const n = reflections.length
+    const assigned = new Set<number>()
+    const clusters: string[][] = []
+
+    for (let i = 0; i < n; i++) {
+      if (assigned.has(i)) continue
+      const cluster = [reflections[i]!.id]
+      assigned.add(i)
+
+      for (let j = i + 1; j < n; j++) {
+        if (assigned.has(j)) continue
+        const similarity = this.cosineSimilarity(embeddings[i]!, embeddings[j]!)
+        if (similarity >= threshold) {
+          cluster.push(reflections[j]!.id)
+          assigned.add(j)
+        }
+      }
+      clusters.push(cluster)
+    }
+
+    Logger.info(`clusterByEmbeddings: Created ${clusters.length} clusters from ${n} reflections (threshold=${threshold})`)
+    return clusters
+  }
+
+  private async groupReflectionsViaEmbeddings(
+    reflections: GroupReflectionsInput[],
+    modelName?: string
+  ): Promise<GroupReflectionsResult | null> {
+    const embeddingConfig = this.getEmbeddingConfig(modelName)
+    if (!embeddingConfig) {
+      Logger.warn('groupReflectionsViaEmbeddings: No embedding model configured')
+      return null
+    }
+    Logger.info(`groupReflectionsViaEmbeddings: Grouping ${reflections.length} reflections using embedding model=${embeddingConfig.model}`)
+
+    const texts = reflections.map((r) => r.text)
+    const embeddings = await this.getEmbeddings(texts, embeddingConfig)
+    if (!embeddings) return null
+
+    const clusters = this.clusterByEmbeddings(reflections, embeddings, embeddingConfig.threshold)
+
+    // Generate titles for each cluster using the first generative model
+    const groups: GroupReflectionsResult['groups'] = []
+    for (let i = 0; i < clusters.length; i++) {
+      const clusterIds = clusters[i]!
+      const clusterReflections = reflections.filter((r) => clusterIds.includes(r.id))
+      const title = await this.generateGroupTitle(
+        clusterReflections.map((r) => ({plaintextContent: r.text}))
+      ) || `Group ${i + 1}`
+      groups.push({title, reflectionIds: clusterIds})
+    }
+
+    Logger.info(`groupReflectionsViaEmbeddings: Complete — ${groups.length} groups`)
+    return {groups}
+  }
+
   async groupReflectionsStructured(
-    reflections: GroupReflectionsInput[]
+    reflections: GroupReflectionsInput[],
+    modelName?: string
   ): Promise<GroupReflectionsResult | null> {
     if (!this.openAIApi) return null
     if (reflections.length === 0) return null
+
+    // Auto-detect strategy from model name
+    if (modelName && this.isEmbeddingModel(modelName)) {
+      return this.groupReflectionsViaEmbeddings(reflections, modelName)
+    }
+
+    // Use the selected generative model config
+    const genConfig = this.getGenerationConfig(modelName)
 
     // Small meetings: single call (original behavior)
     if (reflections.length <= this.groupingBatchSize) {
       try {
         const prompt = this.buildGroupingPrompt(reflections)
         const label = 'groupReflectionsStructured'
-        const result = await this.callLLM(prompt, label)
+        const result = await this.callLLM(prompt, label, genConfig)
         if (!result) return null
 
         // If truncated in single-call mode, fall through to batched approach
@@ -344,7 +469,7 @@ Every group index (0 to ${allGroups.length - 1}) must appear in exactly one merg
     // Step 1: Group each batch sequentially
     const batchResults: GroupReflectionsResult[] = []
     for (let i = 0; i < batches.length; i++) {
-      const result = await this.groupReflectionBatch(batches[i]!, i, batches.length)
+      const result = await this.groupReflectionBatch(batches[i]!, i, batches.length, genConfig)
       if (!result) {
         Logger.warn(`groupReflectionsStructured: Batch ${i + 1}/${batches.length} failed, adding reflections as ungrouped`)
         batchResults.push({
@@ -356,7 +481,7 @@ Every group index (0 to ${allGroups.length - 1}) must appear in exactly one merg
     }
 
     // Step 2: Merge similar groups across batches
-    const merged = await this.mergeGroupTitles(batchResults)
+    const merged = await this.mergeGroupTitles(batchResults, genConfig)
 
     // Step 3: Final repair
     const inputIds = new Set(reflections.map((r) => r.id))

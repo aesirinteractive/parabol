@@ -1,4 +1,5 @@
 import type {RetroMeetingMember} from '../../../postgres/types/Meeting'
+import {getAvailableGroupingModels} from '../../../utils/aiModelsConfig'
 import {getUserId} from '../../../utils/authorization'
 import filterTasksByMeeting from '../../../utils/filterTasksByMeeting'
 import getPhase from '../../../utils/getPhase'
@@ -7,6 +8,7 @@ import type {RetrospectiveMeetingResolvers} from '../resolverTypes'
 
 const RetrospectiveMeeting: RetrospectiveMeetingResolvers = {
   autoGroupThreshold: resolveForSU('autoGroupThreshold'),
+  availableGroupingModels: () => getAvailableGroupingModels(),
   commentCount: ({commentCount}) => commentCount || 0,
   disableAnonymity: ({disableAnonymity}) => disableAnonymity ?? false,
   meetingMembers: async ({id: meetingId}, _args, {dataLoader}) => {

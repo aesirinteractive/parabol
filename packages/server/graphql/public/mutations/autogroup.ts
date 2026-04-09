@@ -12,7 +12,7 @@ import type {MutationResolvers} from '../resolverTypes'
 
 const autogroup: MutationResolvers['autogroup'] = async (
   _source,
-  {meetingId}: {meetingId: string},
+  {meetingId, modelName}: {meetingId: string; modelName?: string | null},
   context: GQLContext
 ) => {
   const pg = getKysely()
@@ -65,7 +65,7 @@ const autogroup: MutationResolvers['autogroup'] = async (
     text: r.plaintextContent,
     prompt: promptMap.get(r.promptId) ?? ''
   }))
-  const aiResult = await manager.groupReflectionsStructured(input)
+  const aiResult = await manager.groupReflectionsStructured(input, modelName ?? undefined)
   if (!aiResult) {
     return standardError(new Error('AI grouping failed'), {userId: viewerId})
   }
