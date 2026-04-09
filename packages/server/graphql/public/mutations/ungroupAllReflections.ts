@@ -51,7 +51,7 @@ const ungroupAllReflections: MutationResolvers['ungroupAllReflections'] = async 
     // Keep the first reflection in the original group, remove the rest
     const reflectionsToRemove = reflectionIds.slice(1)
     for (const reflectionId of reflectionsToRemove) {
-      await removeReflectionFromGroup(reflectionId, context)
+      await removeReflectionFromGroup(reflectionId, context, true)
     }
   }
 

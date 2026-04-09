@@ -88,14 +88,18 @@ const addReflectionToGroup = async (
     }
 
     if (oldReflections.length > 0) {
-      const meeting = await dataLoader.get('newMeetings').loadNonNull(meetingId)
-      await updateGroupTitle({
-        reflections: oldReflections,
-        reflectionGroupId: oldReflectionGroupId,
-        meetingId,
-        teamId: meeting.teamId,
-        dataLoader
-      })
+      // Skip AI title regeneration during autogroup/reset (smartTitle provided)
+      // since old groups will be re-titled or emptied by subsequent operations
+      if (!smartTitle) {
+        const meeting = await dataLoader.get('newMeetings').loadNonNull(meetingId)
+        await updateGroupTitle({
+          reflections: oldReflections,
+          reflectionGroupId: oldReflectionGroupId,
+          meetingId,
+          teamId: meeting.teamId,
+          dataLoader
+        })
+      }
     } else {
       await pg
         .updateTable('RetroReflectionGroup')

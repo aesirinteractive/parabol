@@ -1,10 +1,12 @@
 import dndNoise from '../../../../../client/utils/dndNoise'
+import {getSimpleGroupTitle} from 'parabol-client/utils/getSimpleGroupTitle'
 import ReflectionGroup from '../../../../database/types/ReflectionGroup'
 import getKysely from '../../../../postgres/getKysely'
 import type {GQLContext} from '../../../graphql'
 import updateGroupTitle from '../updateGroupTitle'
+import updateSmartGroupTitle from './updateSmartGroupTitle'
 
-const removeReflectionFromGroup = async (reflectionId: string, {dataLoader}: GQLContext) => {
+const removeReflectionFromGroup = async (reflectionId: string, {dataLoader}: GQLContext, skipTitleUpdate = false) => {
   const pg = getKysely()
   const reflection = await dataLoader.get('retroReflections').load(reflectionId)
   if (!reflection) throw new Error('Reflection not found')
@@ -64,30 +66,39 @@ const removeReflectionFromGroup = async (reflectionId: string, {dataLoader}: GQL
     .get('retroReflectionsByGroupId')
     .load(oldReflectionGroupId)
 
-  const meeting = await dataLoader.get('newMeetings').loadNonNull(meetingId)
-  await updateGroupTitle({
-    reflections: [reflection],
-    reflectionGroupId: reflectionGroupId,
-    meetingId,
-    teamId: meeting.teamId,
-    dataLoader
-  })
+  if (skipTitleUpdate) {
+    // Use simple text-based title (no LLM call) for batch operations like Ungroup All
+    const simpleTitle = getSimpleGroupTitle([reflection])
+    await updateSmartGroupTitle(reflectionGroupId, simpleTitle)
+  } else {
+    const meeting = await dataLoader.get('newMeetings').loadNonNull(meetingId)
+    await updateGroupTitle({
+      reflections: [reflection],
+      reflectionGroupId: reflectionGroupId,
+      meetingId,
+      teamId: meeting.teamId,
+      dataLoader
+    })
+  }
 
   if (oldReflections.length > 0) {
-    const oldReflectionGroup = await dataLoader
-      .get('retroReflectionGroups')
-      .loadNonNull(oldReflectionGroupId)
-    const titleIsUserDefined =
-      oldReflectionGroup.title !== oldReflectionGroup.smartTitle && oldReflectionGroup.title !== ''
+    if (!skipTitleUpdate) {
+      const oldReflectionGroup = await dataLoader
+        .get('retroReflectionGroups')
+        .loadNonNull(oldReflectionGroupId)
+      const titleIsUserDefined =
+        oldReflectionGroup.title !== oldReflectionGroup.smartTitle && oldReflectionGroup.title !== ''
 
-    if (!titleIsUserDefined) {
-      await updateGroupTitle({
-        reflections: oldReflections,
-        reflectionGroupId: oldReflectionGroupId,
-        meetingId,
-        teamId: meeting.teamId,
-        dataLoader
-      })
+      if (!titleIsUserDefined) {
+        const meeting = await dataLoader.get('newMeetings').loadNonNull(meetingId)
+        await updateGroupTitle({
+          reflections: oldReflections,
+          reflectionGroupId: oldReflectionGroupId,
+          meetingId,
+          teamId: meeting.teamId,
+          dataLoader
+        })
+      }
     }
   } else {
     await pg
